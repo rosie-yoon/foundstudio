@@ -91,7 +91,7 @@ def get_recent_titles(limit=50):
 
 # ==================== 페이지 설정 ====================
 st.set_page_config(
-    page_title="🎵 AI 작사 스튜디오 Pro",
+    page_title="Found Studio",
     page_icon="🎵",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -735,6 +735,6 @@ with tab2:
 st.divider()
 st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
-    🎵 AI 작사 스튜디오 Pro | Gemini 2.5 Flash + 이력 관리 시스템
+    🎵 Found Studio
 </div>
 """, unsafe_allow_html=True)
