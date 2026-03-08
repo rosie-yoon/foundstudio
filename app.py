@@ -22,17 +22,14 @@ if not API_KEY:
     except ImportError:
         API_KEY = None
 
-# API 키 검증
+# ❌ 이런 줄이 있으면 반드시 삭제!
+# if not API_KEY:
+#     API_KEY = "AIzaSy..."  <- 하드코딩 금지
+
 if not API_KEY or not API_KEY.strip():
     st.error("❌ GEMINI_API_KEY가 설정되지 않았습니다.")
-    st.markdown("""
-    **해결 방법:**
-    - **Streamlit Cloud**: App Settings → Secrets에서 설정
-    - **로컬 실행**: .env 파일에 `GEMINI_API_KEY=본인키` 입력
-    """)
     st.stop()
 
-# ❌ 절대로 API 키를 코드에 직접 입력하지 마세요!
 
 # ==================== 파일 저장소 설정 ====================
 HISTORY_FILE = "lyrics_history.csv"
@@ -643,30 +640,36 @@ with tab2:
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            # 날짜 필터
-            unique_dates = df_history['timestamp'].str[:10].unique()
-            selected_date = st.selectbox("📅 날짜 선택", ["전체"] + sorted(unique_dates, reverse=True))
+            # 날짜 필터 (안전한 접근)
+            if 'timestamp' in df_history.columns:
+                unique_dates = df_history['timestamp'].astype(str).str[:10].unique()
+                selected_date = st.selectbox("📅 날짜 선택", ["전체"] + sorted(unique_dates, reverse=True))
+            else:
+                selected_date = "전체"
 
         with col2:
-            # 스타일 필터
-            unique_styles = df_history['style'].unique()
-            selected_style = st.selectbox("🎭 스타일 필터", ["전체"] + list(unique_styles))
+            # 스타일 필터 (안전한 접근)
+            if 'style' in df_history.columns:
+                unique_styles = df_history['style'].unique()
+                selected_style = st.selectbox("🎭 스타일 필터", ["전체"] + list(unique_styles))
+            else:
+                selected_style = "전체"
 
         with col3:
             # 검색
             search_term = st.text_input("🔍 제목 검색", placeholder="제목으로 검색...")
 
-        # 필터 적용
+        # 필터 적용 (안전한 방식)
         filtered_df = df_history.copy()
 
-        if selected_date != "전체":
-            filtered_df = filtered_df[filtered_df['timestamp'].str.startswith(selected_date)]
+        if selected_date != "전체" and 'timestamp' in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df['timestamp'].astype(str).str.startswith(selected_date)]
 
-        if selected_style != "전체":
+        if selected_style != "전체" and 'style' in filtered_df.columns:
             filtered_df = filtered_df[filtered_df['style'] == selected_style]
 
-        if search_term:
-            filtered_df = filtered_df[filtered_df['title'].str.contains(search_term, case=False, na=False)]
+        if search_term and 'title' in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df['title'].astype(str).str.contains(search_term, case=False, na=False)]
 
         # 결과 표시
         st.divider()
@@ -676,40 +679,55 @@ with tab2:
         else:
             st.success(f"📊 총 {len(filtered_df)}곡이 검색되었습니다.")
 
-            # 세션별로 그룹화하여 표시
+            # 세션별 그룹화 (session_id 없으면 timestamp 사용)
+            if 'session_id' not in filtered_df.columns:
+                filtered_df['session_id'] = filtered_df['timestamp']
+
             sessions = filtered_df.groupby('session_id')
 
-            for session_id, session_df in sessions:
+            # 최신순 정렬
+            sorted_sessions = sorted(sessions, key=lambda x: x[1]['timestamp'].max(), reverse=True)
+
+            for session_id, session_df in sorted_sessions:
                 session_info = session_df.iloc[0]
                 session_count = len(session_df)
+                timestamp_str = str(session_info['timestamp'])
+                genre_str = str(session_info.get('genre', 'Unknown'))
+                style_str = str(session_info.get('style', 'Unknown'))
 
                 with st.expander(
-                        f"📁 {session_info['timestamp']} | {session_info['genre']} - {session_info['style']} | {session_count}곡",
+                        f"📁 {timestamp_str} | {genre_str} - {style_str} | {session_count}곡",
                         expanded=False
                 ):
                     for idx, (_, song) in enumerate(session_df.iterrows(), 1):
-                        st.markdown(f"### 🎵 {idx}. {song['title']}")
-                        st.markdown(f"**컨셉:** {song['theme']}")
+                        # 안전한 데이터 접근 (핵심 수정 부분)
+                        title = str(song.get('title', 'Untitled'))
+                        theme_content = song.get('theme_ko', song.get('theme', '컨셉 정보 없음'))
+                        lyrics_content = str(song.get('lyrics', ''))
 
-                        # 복사 버튼
+                        st.markdown(f"### 🎵 {idx}. {title}")
+                        st.markdown(f"**컨셉:** {theme_content}")
+
+                        # 복사 버튼 (고유 키 생성)
                         col_a, col_b, col_c = st.columns(3)
+                        unique_key = f"{session_id}_{idx}_{hash(str(song.name))}"
 
                         with col_a:
-                            if st.button("📋 제목 복사", key=f"h_title_{song.name}"):
-                                st.code(song['title'], language="text")
+                            if st.button("📋 제목 복사", key=f"h_title_{unique_key}"):
+                                st.code(title, language="text")
 
                         with col_b:
-                            if st.button("📋 가사 복사", key=f"h_lyrics_{song.name}"):
-                                st.code(song['lyrics'], language="text")
+                            if st.button("📋 가사 복사", key=f"h_lyrics_{unique_key}"):
+                                st.code(lyrics_content, language="text")
 
                         with col_c:
-                            combined = f"Title: {song['title']}\n\n{song['lyrics']}"
-                            if st.button("📋 전체 복사", key=f"h_all_{song.name}"):
+                            combined = f"Title: {title}\n\n{lyrics_content}"
+                            if st.button("📋 전체 복사", key=f"h_all_{unique_key}"):
                                 st.code(combined, language="text")
 
-                        # 가사 표시 (접을 수 있게)
+                        # 가사 표시
                         with st.expander("가사 내용 보기", expanded=False):
-                            st.text(song['lyrics'])
+                            st.text(lyrics_content)
 
                         st.divider()
 
