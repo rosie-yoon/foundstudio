@@ -953,8 +953,8 @@ with tab2:
                     st.markdown("**📝 가사 (Lyrics)**")
                     st.code(lyrics_content, language="text")
 
-                    st.markdown("**📋 전체 (제목 + 가사)**")
-                    combined = f"Title: {title}\n\n{lyrics_content}"
+                    st.markdown("**📋 가사 (가사)**")
+                    combined = {lyrics_content}"
                     st.code(combined, language="text")
                 else:
                     st.info("👈 좌측 목록에서 곡을 선택해주세요.")
