@@ -5,18 +5,15 @@ import time
 import os
 import pandas as pd
 import requests
+from datetime import datetime
 
 # Suno API 설정
 SUNO_API_URL = os.getenv('SUNO_API_URL', 'http://localhost:3000')
-from datetime import datetime
 
 
 # ==================== 유틸리티 함수: 가사 정리 ====================
 def clean_lyrics_output(raw_lyrics):
-    """
-    AI가 생성한 가사에서 Title, Theme Description 등 메타데이터를 제거하고
-    순수한 가사 구조([Verse], [Chorus] 등)만 반환
-    """
+    """AI가 생성한 가사에서 메타데이터를 제거하고 순수한 가사만 반환"""
     if not raw_lyrics:
         return ""
 
@@ -27,13 +24,11 @@ def clean_lyrics_output(raw_lyrics):
     for line in lines:
         stripped_line = line.strip()
 
-        # 빈 줄은 가사 시작 후에만 유지
         if not stripped_line:
             if lyrics_started:
                 cleaned_lines.append(line)
             continue
 
-        # 메타데이터 줄들 건너뛰기
         lower_line = stripped_line.lower()
         if any(lower_line.startswith(prefix) for prefix in [
             'title:', 'theme:', 'theme description:', 'concept:',
@@ -41,7 +36,6 @@ def clean_lyrics_output(raw_lyrics):
         ]):
             continue
 
-        # [Verse], [Chorus] 등이 나오면 가사 시작으로 판단
         if stripped_line.startswith('[') and any(tag in lower_line for tag in [
             'verse', 'chorus', 'pre-chorus', 'bridge', 'intro', 'outro', 'final', 'hook'
         ]):
@@ -50,7 +44,6 @@ def clean_lyrics_output(raw_lyrics):
         if lyrics_started:
             cleaned_lines.append(line)
 
-    # 태그를 못 찾았으면 원본 반환 (안전장치)
     if not cleaned_lines:
         return raw_lyrics.strip()
 
@@ -58,78 +51,51 @@ def clean_lyrics_output(raw_lyrics):
 
 
 def generate_music_with_suno(title, lyrics, style):
-    """Suno API를 통해 음악 생성 - Urban R&B 고정 태그 적용"""
+    """Suno API를 통해 음악 생성"""
     try:
-        # 1. 서버 연결 확인
         health_check = requests.get(f"{SUNO_API_URL}/api/get_limit", timeout=5)
         if health_check.status_code != 200:
             return None, f"Suno API 서버 연결 실패: {health_check.status_code}"
 
-        # 2. 데이터 전처리 (안전성 강화)
-        cleaned_lyrics = lyrics.strip()[:2500]  # 보수적인 길이 제한
-        cleaned_title = title.strip()[:80]  # 제목 길이 제한
-
-        # 3. ✨ 요청하신 Urban R&B 고정 태그 (영어로 변경)
+        cleaned_lyrics = lyrics.strip()[:2500]
+        cleaned_title = title.strip()[:80]
         fixed_tags = "R&B, Hiphop, Groovy Beat, indie, Urban Soul"
 
-        # 4. 페이로드 구성
         payload = {
             "prompt": cleaned_lyrics,
-            "tags": fixed_tags,  # 고정 태그 사용
+            "tags": fixed_tags,
             "title": cleaned_title,
             "make_instrumental": False,
             "wait_audio": False,
-            "mv": "chirp-v3-5"  # 최신 모델 버전 명시
+            "mv": "chirp-v3-5"
         }
 
-        # 5. 디버깅용 로그 (터미널에서 확인 가능)
-        print(f"\n{'=' * 60}")
-        print(f"🎵 Suno API 요청 정보")
-        print(f"{'=' * 60}")
-        print(f"📌 URL: {SUNO_API_URL}/api/custom_generate")
-        print(f"🎼 Title: {cleaned_title}")
-        print(f"🏷️ Fixed Tags: {fixed_tags}")
-        print(f"📝 Lyrics Length: {len(cleaned_lyrics)} chars")
-        print(f"⚙️ Model: chirp-v3-5")
-        print(f"{'=' * 60}")
-
-        # 6. 요청 전송
         response = requests.post(
             f"{SUNO_API_URL}/api/custom_generate",
             json=payload,
             headers={'Content-Type': 'application/json'},
-            timeout=60  # 충분한 타임아웃
+            timeout=60
         )
-
-        # 7. 응답 처리 및 상세 로깅
-        print(f"\n📡 Suno API 응답:")
-        print(f"🔢 Status Code: {response.status_code}")
-        print(f"📄 Response: {response.text[:300]}...")
 
         if response.status_code == 200:
             result = response.json()
             if result and len(result) > 0:
                 ids = [item.get('id') for item in result if item.get('id')]
                 if ids:
-                    print(f"✅ 생성 성공! IDs: {ids}")
                     return ids, None
                 else:
                     return None, "Suno에서 유효한 ID를 반환하지 않았습니다."
             else:
                 return None, f"Suno 응답이 비어있습니다: {response.text}"
         else:
-            # 에러 상세 정보
             error_detail = response.text[:200] if response.text else "응답 없음"
-            print(f"❌ 에러: {error_detail}")
             return None, f"Suno API 오류 {response.status_code}: {error_detail}"
 
     except requests.exceptions.ConnectionError:
-        return None, "❌ Suno API 서버 연결 실패. 터미널에서 'npm run dev' 실행 여부 확인"
+        return None, "❌ Suno API 서버 연결 실패"
     except requests.exceptions.Timeout:
         return None, "⏱️ Suno API 요청 시간 초과 (60초)"
     except Exception as e:
-        import traceback
-        print(f"\n💥 예외 발생:\n{traceback.format_exc()}")
         return None, f"예상치 못한 오류: {str(e)}"
 
 
@@ -240,11 +206,15 @@ def init_session_state():
         st.session_state.generated_lyrics = []
     if 'generation_count' not in st.session_state:
         st.session_state.generation_count = 0
-    # ✨ 2분할 UI용 선택 인덱스 추가
     if 'selected_song_index' not in st.session_state:
         st.session_state.selected_song_index = 0
     if 'selected_history_index' not in st.session_state:
         st.session_state.selected_history_index = 0
+    # ✨ 트리 구조용 상태 추가
+    if 'expanded_dates' not in st.session_state:
+        st.session_state.expanded_dates = set()
+    if 'history_flat_list' not in st.session_state:
+        st.session_state.history_flat_list = []
 
 
 init_session_state()
@@ -257,87 +227,170 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2분할 UI를 위한 개선된 CSS
+# ==================== ✨ 구글 블루 테마 + 깔끔한 UI CSS ====================
 st.markdown("""
 <style>
+    /* 전체 배경 */
     .stApp {
         background-color: #0E1117;
-        color: #FAFAFA;
+        color: #E8EAED;
     }
 
-    /* 좌측 곡 목록 스타일 */
-    .song-list-container {
-        background-color: #1E1E1E;
-        border-radius: 10px;
-        padding: 15px;
-        max-height: 600px;
-        overflow-y: auto;
+    /* CSS 변수로 구글 블루 색상 정의 */
+    :root {
+        --google-blue: #4285F4;
+        --google-blue-hover: #5A9DF8;
+        --google-blue-dark: #1A73E8;
     }
 
-    /* 우측 상세 패널 스타일 */
-    .detail-panel {
-        background-color: #1E1E1E;
-        border-radius: 10px;
-        padding: 20px;
-        min-height: 600px;
-    }
-
-    /* 선택된 곡 하이라이트 */
-    .selected-song {
-        background-color: #FF4B4B !important;
-        color: white !important;
-    }
-
-    .song-card {
-        background: linear-gradient(135deg, #1E1E1E 0%, #2D2D2D 100%);
-        border-radius: 12px;
-        padding: 20px;
-        margin: 15px 0;
-        border-left: 4px solid #FF4B4B;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-    }
-
-    .style-tag {
-        background-color: #FF4B4B;
-        color: white;
-        padding: 4px 12px;
-        border-radius: 15px;
-        font-size: 12px;
-        font-weight: bold;
-        display: inline-block;
-        margin-bottom: 10px;
-    }
-
+    /* 구글 블루 버튼 스타일 */
     .stButton>button {
-        background-color: #FF4B4B;
-        color: white;
+        background-color: #2D2D2D !important;
+        color: #E8EAED !important;
+        border: 1px solid #444 !important;
         border-radius: 8px;
-        border: none;
-        padding: 12px 24px;
-        font-weight: bold;
-        transition: all 0.3s ease;
+        padding: 10px 16px;
+        font-weight: 500;
+        transition: all 0.2s ease;
         width: 100%;
         text-align: left;
     }
 
     .stButton>button:hover {
-        background-color: #FF6B6B;
+        background-color: #3A3A3A !important;
+        border-color: var(--google-blue) !important;
+        color: var(--google-blue) !important;
         transform: translateY(-1px);
     }
 
+    /* Primary 버튼 (선택된 상태) */
+    .stButton>button[kind="primary"] {
+        background-color: var(--google-blue) !important;
+        border-color: var(--google-blue) !important;
+        color: white !important;
+        font-weight: 600;
+    }
+
+    .stButton>button[kind="primary"]:hover {
+        background-color: var(--google-blue-dark) !important;
+        border-color: var(--google-blue-dark) !important;
+        color: white !important;
+    }
+
+    /* 좌측 트리 컨테이너 (배경 제거, 구분선만) */
+    .tree-container {
+        background-color: transparent;
+        border-right: 2px solid #2D2D2D;
+        padding-right: 16px;
+        max-height: 70vh;
+        overflow-y: auto;
+    }
+
+    /* 우측 상세 패널 (배경 완전 제거) */
+    .detail-panel {
+        background-color: transparent;
+        padding-left: 20px;
+        min-height: 70vh;
+    }
+
+    /* 곡 카드 스타일 (배경 투명화) */
+    .song-card {
+        background-color: transparent;
+        border: 1px solid #2D2D2D;
+        border-radius: 12px;
+        padding: 20px;
+        margin: 15px 0;
+        border-left: 4px solid var(--google-blue);
+        transition: all 0.2s ease;
+    }
+
+    .song-card:hover {
+        border-color: var(--google-blue);
+        box-shadow: 0 2px 8px rgba(66, 133, 244, 0.2);
+    }
+
+    /* 스타일 태그 */
+    .style-tag {
+        background-color: var(--google-blue);
+        color: white;
+        padding: 6px 14px;
+        border-radius: 16px;
+        font-size: 12px;
+        font-weight: 600;
+        display: inline-block;
+        margin-bottom: 10px;
+    }
+
     /* 스크롤바 스타일 */
-    .song-list-container::-webkit-scrollbar {
+    .tree-container::-webkit-scrollbar {
         width: 8px;
     }
 
-    .song-list-container::-webkit-scrollbar-track {
-        background: #2D2D2D;
+    .tree-container::-webkit-scrollbar-track {
+        background: #1E1E1E;
         border-radius: 4px;
     }
 
-    .song-list-container::-webkit-scrollbar-thumb {
-        background: #FF4B4B;
+    .tree-container::-webkit-scrollbar-thumb {
+        background: var(--google-blue);
         border-radius: 4px;
+    }
+
+    .tree-container::-webkit-scrollbar-thumb:hover {
+        background: var(--google-blue-hover);
+    }
+
+    /* 제목 스타일 */
+    h1 {
+        color: var(--google-blue) !important;
+    }
+
+    h2, h3 {
+        color: #E8EAED !important;
+    }
+
+    /* 입력 필드 */
+    .stTextInput>div>div>input,
+    .stTextArea>div>div>textarea {
+        background-color: #1E1E1E;
+        color: #E8EAED;
+        border: 1px solid var(--google-blue);
+        border-radius: 8px;
+    }
+
+    /* 메트릭 */
+    .stMetric {
+        background-color: transparent;
+        padding: 12px;
+        border-radius: 8px;
+        border-left: 3px solid var(--google-blue);
+    }
+
+    /* 성공/정보 박스 */
+    .stAlert {
+        background-color: rgba(66, 133, 244, 0.1);
+        border-left: 4px solid var(--google-blue);
+    }
+
+    /* Expander 스타일 */
+    .streamlit-expanderHeader {
+        background-color: rgba(66, 133, 244, 0.1);
+        border-radius: 8px;
+        color: #E8EAED;
+        font-weight: 600;
+    }
+
+    /* 가사 표시 영역 */
+    .lyrics-display {
+        background-color: #1A1A1A;
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 16px;
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        color: #E8EAED;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -410,7 +463,7 @@ OUTPUT FORMAT: Pure lyrics only, starting with [Verse 1]."""
 
 # ==================== 메인 UI ====================
 st.title("🎵 Found Studio")
-st.markdown("**Gemini AI 기반 프로페셔널 Urban R&B 작사 도구 + 이력 관리**")
+st.markdown("**Gemini AI 기반 프로페셔널 Urban R&B 작사 도구**")
 
 # API 키 확인 및 설정
 if API_KEY and API_KEY.strip():
@@ -474,7 +527,7 @@ with tab1:
             with col1:
                 st.markdown(f"""
                 <div class="song-card">
-                    <div style="color: #FF4B4B; font-size: 22px; font-weight: bold; margin-bottom: 8px;">{genre_name}</div>
+                    <div style="color: var(--google-blue); font-size: 22px; font-weight: bold; margin-bottom: 8px;">{genre_name}</div>
                     <p>{genre_info['description']}</p>
                     <p><strong>사용 가능한 스타일:</strong> {len(genre_info['styles'])}개</p>
                 </div>
@@ -488,7 +541,7 @@ with tab1:
 
     # STEP 2: 스타일 선택
     elif st.session_state.current_step == 2:
-        st.header(f"2️⃣ 스타일을 선택하세요 - {st.session_state.selected_genre}")
+        st.header(f"2️⃣ 스타일을 선택하세요")
 
         genre_data = GENRE_PROMPTS[st.session_state.selected_genre]
 
@@ -498,7 +551,7 @@ with tab1:
             with col1:
                 st.markdown(f"""
                 <div class="song-card">
-                    <div style="color: #FF4B4B; font-size: 22px; font-weight: bold; margin-bottom: 8px;">{style_name}</div>
+                    <div style="color: var(--google-blue); font-size: 22px; font-weight: bold; margin-bottom: 8px;">{style_name}</div>
                     <p>{style_info['description']}</p>
                 </div>
                 """, unsafe_allow_html=True)
@@ -596,7 +649,7 @@ Output as JSON:
                     st.error(f"컨셉 생성 중 오류: {str(e)}")
 
         if st.session_state.setlist:
-            st.subheader("📋 확정된 셋리스트 (제목: 영어 / 컨셉: 한글)")
+            st.subheader("📋 확정된 셋리스트")
 
             edited_setlist = st.data_editor(
                 st.session_state.setlist,
@@ -627,7 +680,6 @@ Output as JSON:
         st.header("5️⃣ 가사 생성 중...")
 
         st.markdown(f"**총 {len(st.session_state.setlist)}곡 생성을 시작합니다.**")
-        st.markdown(f"**스타일:** {st.session_state.selected_genre} - {st.session_state.selected_style}")
 
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -654,8 +706,6 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
             try:
                 response = model.generate_content(lyrics_prompt)
                 raw_lyrics = response.text.strip()
-
-                # 메타데이터 제거하고 순수 가사만 추출
                 clean_lyrics = clean_lyrics_output(raw_lyrics)
 
                 generated_songs.append({
@@ -695,16 +745,15 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
         time.sleep(1)
         st.rerun()
 
-    # ==================== ✨ STEP 6: 2분할 레이아웃 결과 표시 ====================
+    # ==================== ✨ STEP 6: 깔끔한 2분할 레이아웃 ====================
     elif st.session_state.current_step == 6:
-        st.header("6️⃣ 생성 완료! (자동 저장됨)")
+        st.header("6️⃣ 생성 완료!")
 
         if not st.session_state.generated_lyrics:
             st.error("생성된 가사가 없습니다.")
         else:
-            st.success(f"🎉 총 {len(st.session_state.generated_lyrics)}곡의 가사가 완성되어 이력에 저장되었습니다!")
+            st.success(f"🎉 총 {len(st.session_state.generated_lyrics)}곡의 가사가 완성되었습니다!")
 
-            # 상단 액션 버튼
             col1, col2, col3 = st.columns([1, 1, 1])
 
             with col1:
@@ -716,14 +765,14 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
                 st.download_button(
                     "💾 전체 가사 다운로드",
                     data=all_lyrics_text,
-                    file_name=f"{st.session_state.selected_genre}_{st.session_state.selected_style}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                    file_name=f"Found_Studio_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
                     mime="text/plain"
                 )
 
             with col2:
                 if st.button("📋 전체 텍스트 보기"):
                     st.text_area(
-                        "전체 가사 (클릭하여 전체 선택 후 Ctrl+C로 복사)",
+                        "전체 가사",
                         value=all_lyrics_text,
                         height=400,
                         key="all_lyrics_display"
@@ -736,14 +785,13 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
                     st.rerun()
 
             st.divider()
-            st.info("💡 좌측에서 곡을 선택하면, 우측에 가사와 Suno 생성 기능이 표시됩니다.")
 
-            # ==================== 🎯 2분할 레이아웃 시작 ====================
+            # ✨ 깔끔한 2분할 레이아웃
             left_col, right_col = st.columns([3, 7])
 
-            # ========== 좌측: 곡 목록 ==========
+            # 좌측: 제목만 깔끔하게 표시
             with left_col:
-                st.markdown('<div class="song-list-container">', unsafe_allow_html=True)
+                st.markdown('<div class="tree-container">', unsafe_allow_html=True)
                 st.subheader("🎵 곡 목록")
 
                 for idx, song in enumerate(st.session_state.generated_lyrics):
@@ -751,7 +799,7 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
                     button_type = "primary" if is_selected else "secondary"
 
                     if st.button(
-                            f"{'🔵 ' if is_selected else ''}{idx + 1}. {song['title']}",
+                            f"{'🔵 ' if is_selected else ''}{song['title']}",
                             key=f"song_select_{idx}",
                             type=button_type,
                             use_container_width=True
@@ -761,7 +809,7 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
 
                 st.markdown('</div>', unsafe_allow_html=True)
 
-            # ========== 우측: 선택된 곡 상세 정보 ==========
+            # 우측: 상세 정보 (생성날짜 포함)
             with right_col:
                 st.markdown('<div class="detail-panel">', unsafe_allow_html=True)
 
@@ -771,11 +819,15 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
 
                     st.subheader(f"🎵 {song['title']}")
 
-                    col_info, col_style = st.columns([2, 1])
-                    with col_info:
-                        st.markdown(f"**컨셉/주제:** {song['theme']}")
-                    with col_style:
+                    # ✨ 생성날짜와 스타일 표시
+                    meta_col1, meta_col2 = st.columns([2, 1])
+                    with meta_col1:
+                        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        st.caption(f"📅 **생성일시:** {current_time}")
+                    with meta_col2:
                         st.markdown(f'<div class="style-tag">{song["style"]}</div>', unsafe_allow_html=True)
+
+                    st.markdown(f"**💡 컨셉:** {song['theme']}")
 
                     st.divider()
 
@@ -783,7 +835,7 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
                     col1, col2, col3 = st.columns(3)
 
                     with col1:
-                        if st.button("📋 제목만 복사", key=f"copy_title_btn_{idx}"):
+                        if st.button("📋 제목 복사", key=f"copy_title_btn_{idx}"):
                             st.session_state[f"show_title_{idx}"] = True
 
                         if st.session_state.get(f"show_title_{idx}", False):
@@ -796,7 +848,7 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
                             )
 
                     with col2:
-                        if st.button("📋 가사만 복사", key=f"copy_lyrics_btn_{idx}"):
+                        if st.button("📋 가사 복사", key=f"copy_lyrics_btn_{idx}"):
                             st.session_state[f"show_lyrics_{idx}"] = True
 
                         if st.session_state.get(f"show_lyrics_{idx}", False):
@@ -824,9 +876,9 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
 
                     st.divider()
                     st.subheader("📝 가사 내용")
-                    st.text(song['lyrics'])
+                    st.markdown(f'<div class="lyrics-display">{song["lyrics"]}</div>', unsafe_allow_html=True)
 
-                    # ============ Suno 음악 생성 섹션 ============
+                    # Suno 생성 기능 (기존 코드 유지)
                     st.divider()
                     st.subheader("🎼 Suno AI 음악 생성")
 
@@ -863,13 +915,10 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
                             if credit_info:
                                 st.metric("남은 크레딧", credit_info.get('credits_left', 'N/A'))
                     else:
-                        st.error("❌ Suno API 서버 미연결 (suno-api 폴더에서 'npm run dev' 확인)")
+                        st.error("❌ Suno API 서버 미연결")
 
                     # 상태별 UI
                     if suno_state['status'] == 'ready':
-                        if suno_state['generation_count'] > 0:
-                            st.info(f"💡 이전에 {suno_state['generation_count']}번 생성했습니다.")
-
                         button_text = "🎵 음악 생성 시작 (2곡)" if suno_state['generation_count'] == 0 else "🔄 새로 생성하기 (2곡)"
 
                         if st.button(button_text, key=f"suno_gen_{idx}", disabled=not api_connected, type="primary"):
@@ -887,50 +936,36 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
                                 st.rerun()
 
                     elif suno_state['status'] == 'generating':
-                        st.warning(f"🎵 음악 생성 중... (2곡 요청됨)")
+                        st.warning("🎵 음악 생성 중...")
 
-                        col_check, col_cancel = st.columns([1, 1])
+                        if st.button("🔄 완성 상태 확인", key=f"suno_check_{idx}", type="primary"):
+                            with st.spinner("생성 상태를 확인하고 있습니다..."):
+                                status_data, error = check_suno_status(suno_state['audio_ids'])
 
-                        with col_check:
-                            if st.button("🔄 완성 상태 확인", key=f"suno_check_{idx}", type="primary"):
-                                with st.spinner("생성 상태를 확인하고 있습니다..."):
-                                    status_data, error = check_suno_status(suno_state['audio_ids'])
+                                if error:
+                                    st.error(f"상태 확인 실패: {error}")
+                                elif status_data:
+                                    completed_tracks = []
 
-                                    if error:
-                                        st.error(f"상태 확인 실패: {error}")
-                                    elif status_data:
-                                        completed_tracks = []
-                                        pending_count = 0
+                                    for track in status_data:
+                                        track_status = track.get('status', '')
+                                        if track_status in ['streaming', 'complete'] and track.get('audio_url'):
+                                            completed_tracks.append({
+                                                'id': track['id'],
+                                                'audio_url': track['audio_url'],
+                                                'video_url': track.get('video_url'),
+                                                'image_url': track.get('image_url'),
+                                                'title': track.get('title', song['title']),
+                                                'duration': track.get('duration', 0)
+                                            })
 
-                                        for track in status_data:
-                                            track_status = track.get('status', '')
-                                            if track_status in ['streaming', 'complete'] and track.get('audio_url'):
-                                                completed_tracks.append({
-                                                    'id': track['id'],
-                                                    'audio_url': track['audio_url'],
-                                                    'video_url': track.get('video_url'),
-                                                    'image_url': track.get('image_url'),
-                                                    'title': track.get('title', song['title']),
-                                                    'duration': track.get('duration', 0)
-                                                })
-                                            elif track_status in ['submitted', 'queued', 'processing']:
-                                                pending_count += 1
-
-                                        if completed_tracks:
-                                            suno_state['status'] = 'completed'
-                                            suno_state['audio_urls'] = completed_tracks
-                                            st.success(f"✅ {len(completed_tracks)}개 버전 완성!")
-                                            st.rerun()
-                                        elif pending_count > 0:
-                                            st.info(f"🎵 아직 생성 중입니다... ({pending_count}개 트랙 처리 중)")
-
-                        with col_cancel:
-                            if st.button("❌ 취소하고 돌아가기", key=f"suno_cancel_{idx}"):
-                                suno_state['status'] = 'ready'
-                                suno_state['audio_ids'] = []
-                                st.rerun()
-
-                        st.caption(f"생성 ID: {', '.join(suno_state['audio_ids'])}")
+                                    if completed_tracks:
+                                        suno_state['status'] = 'completed'
+                                        suno_state['audio_urls'] = completed_tracks
+                                        st.success(f"✅ {len(completed_tracks)}개 버전 완성!")
+                                        st.rerun()
+                                    else:
+                                        st.info("🎵 아직 생성 중입니다...")
 
                     elif suno_state['status'] == 'completed':
                         st.success(f"✅ 음악 생성 완료! ({len(suno_state['audio_urls'])}개 버전)")
@@ -946,8 +981,6 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
                                 if track1['audio_url']:
                                     st.audio(track1['audio_url'])
                                     st.markdown(f"[📥 오디오 다운로드]({track1['audio_url']})")
-                                    if track1.get('video_url'):
-                                        st.markdown(f"[🎬 비디오 다운로드]({track1['video_url']})")
 
                             with col_v2:
                                 track2 = suno_state['audio_urls'][1]
@@ -957,45 +990,34 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
                                 if track2['audio_url']:
                                     st.audio(track2['audio_url'])
                                     st.markdown(f"[📥 오디오 다운로드]({track2['audio_url']})")
-                                    if track2.get('video_url'):
-                                        st.markdown(f"[🎬 비디오 다운로드]({track2['video_url']})")
 
-                        if st.button("🔄 마음에 안 들어요? 다시 생성하기", key=f"suno_regenerate_{idx}"):
+                        if st.button("🔄 다시 생성하기", key=f"suno_regenerate_{idx}"):
                             suno_state['status'] = 'ready'
                             suno_state['audio_ids'] = []
                             suno_state['audio_urls'] = []
                             st.rerun()
 
                     elif suno_state['status'] == 'error':
-                        st.error(f"❌ 음악 생성 중 오류 발생")
+                        st.error("❌ 음악 생성 중 오류 발생")
                         st.code(suno_state['error_message'])
 
-                        col_retry, col_back = st.columns([1, 1])
-
-                        with col_retry:
-                            if st.button("🔄 다시 시도", key=f"suno_retry_{idx}"):
-                                suno_state['status'] = 'ready'
-                                suno_state['error_message'] = ''
-                                st.rerun()
-
-                        with col_back:
-                            if st.button("⬅️ 포기하고 돌아가기", key=f"suno_back_{idx}"):
-                                suno_state['status'] = 'ready'
-                                suno_state['error_message'] = ''
-                                st.rerun()
+                        if st.button("🔄 다시 시도", key=f"suno_retry_{idx}"):
+                            suno_state['status'] = 'ready'
+                            suno_state['error_message'] = ''
+                            st.rerun()
 
                 st.markdown('</div>', unsafe_allow_html=True)
 
-# ==================== ✨ TAB 2: 이력 보기 (2분할 UI 적용) ====================
+# ==================== ✨ TAB 2: 날짜별 트리 구조 이력 ====================
 with tab2:
-    st.header("📚 생성 이력 보기")
-    st.info("🌅 아침에 생성하고 🌆 저녁에 확인하는 워크플로우를 위한 이력 관리")
+    st.header("📚 생성 이력")
 
     df_history = load_history()
 
     if df_history.empty:
         st.warning("아직 저장된 이력이 없습니다.")
     else:
+        # 필터링 UI
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -1013,17 +1035,18 @@ with tab2:
                 selected_style = "전체"
 
         with col3:
-            search_term = st.text_input("🔍 제목 검색", placeholder="제목으로 검색...")
+            search_term = st.text_input("🔍 제목 검색")
 
+        # 필터 적용
         filtered_df = df_history.copy()
 
-        if selected_date != "전체" and 'timestamp' in filtered_df.columns:
+        if selected_date != "전체":
             filtered_df = filtered_df[filtered_df['timestamp'].astype(str).str.startswith(selected_date)]
 
-        if selected_style != "전체" and 'style' in filtered_df.columns:
+        if selected_style != "전체":
             filtered_df = filtered_df[filtered_df['style'] == selected_style]
 
-        if search_term and 'title' in filtered_df.columns:
+        if search_term:
             filtered_df = filtered_df[filtered_df['title'].astype(str).str.contains(search_term, case=False, na=False)]
 
         st.divider()
@@ -1033,50 +1056,71 @@ with tab2:
         else:
             st.success(f"📊 총 {len(filtered_df)}곡이 검색되었습니다.")
 
-            # 이력도 2분할 레이아웃 적용
-            filtered_df = filtered_df.reset_index(drop=True)
+            # ✨ 날짜별 그룹화 및 플랫 리스트 생성
+            filtered_df['date_only'] = pd.to_datetime(filtered_df['timestamp']).dt.date
+            date_groups = filtered_df.groupby('date_only')
 
-            # ==================== 🎯 이력 2분할 레이아웃 ====================
+            # 플랫 리스트 생성 (트리 구조에서 선택을 위해)
+            flat_list = []
+            for date, group_df in sorted(date_groups, key=lambda x: x[0], reverse=True):
+                for _, row in group_df.iterrows():
+                    flat_list.append(row)
+
+            st.session_state.history_flat_list = flat_list
+
+            # ✨ 2분할 트리 레이아웃
             hist_left_col, hist_right_col = st.columns([3, 7])
 
-            # ========== 좌측: 이력 목록 ==========
+            # 좌측: 날짜별 트리 구조
             with hist_left_col:
-                st.markdown('<div class="song-list-container">', unsafe_allow_html=True)
-                st.subheader("📑 곡 목록")
+                st.markdown('<div class="tree-container">', unsafe_allow_html=True)
+                st.subheader("📅 날짜별 곡 목록")
 
-                for idx, row in filtered_df.iterrows():
-                    is_selected = (st.session_state.selected_history_index == idx)
-                    button_type = "primary" if is_selected else "secondary"
+                flat_index = 0
+                for date, group_df in sorted(date_groups, key=lambda x: x[0], reverse=True):
+                    date_str = date.strftime("%Y-%m-%d")
 
-                    display_text = f"{'🔵 ' if is_selected else ''}{row['title']}\n📅 {row['timestamp'][5:16]} | 🎭 {row['style']}"
+                    # 날짜 헤더 (접기/펼치기)
+                    with st.expander(f"📅 {date_str} ({len(group_df)}곡)", expanded=(
+                            date_str == sorted([d.strftime("%Y-%m-%d") for d, _ in date_groups], reverse=True)[0])):
+                        for _, row in group_df.iterrows():
+                            is_selected = (st.session_state.selected_history_index == flat_index)
+                            button_type = "primary" if is_selected else "secondary"
 
-                    if st.button(
-                            display_text,
-                            key=f"hist_select_{idx}",
-                            type=button_type,
-                            use_container_width=True
-                    ):
-                        st.session_state.selected_history_index = idx
-                        st.rerun()
+                            if st.button(
+                                    f"{'🔵 ' if is_selected else ''}🎵 {row['title']}",
+                                    key=f"hist_song_{flat_index}",
+                                    type=button_type,
+                                    use_container_width=True
+                            ):
+                                st.session_state.selected_history_index = flat_index
+                                st.rerun()
+
+                            flat_index += 1
 
                 st.markdown('</div>', unsafe_allow_html=True)
 
-            # ========== 우측: 선택된 이력 상세 정보 ==========
+            # 우측: 상세 정보 (생성날짜 표시)
             with hist_right_col:
                 st.markdown('<div class="detail-panel">', unsafe_allow_html=True)
 
-                if 0 <= st.session_state.selected_history_index < len(filtered_df):
-                    selected_row = filtered_df.iloc[st.session_state.selected_history_index]
+                if 0 <= st.session_state.selected_history_index < len(st.session_state.history_flat_list):
+                    selected_row = st.session_state.history_flat_list[st.session_state.selected_history_index]
 
                     title = str(selected_row.get('title', 'Untitled'))
-                    theme_content = selected_row.get('theme_ko', selected_row.get('theme', '컨셉 정보 없음'))
-                    raw_lyrics_content = str(selected_row.get('lyrics', ''))
-                    lyrics_content = clean_lyrics_output(raw_lyrics_content)
+                    theme = selected_row.get('theme_ko', selected_row.get('theme', ''))
+                    lyrics = clean_lyrics_output(str(selected_row.get('lyrics', '')))
 
                     st.subheader(f"🎵 {title}")
-                    st.markdown(f"**📅 생성일시:** {selected_row['timestamp']}")
-                    st.markdown(f"**🎭 스타일:** {selected_row['style']}")
-                    st.markdown(f"**💡 컨셉:** {theme_content}")
+
+                    # ✨ 생성날짜와 스타일 표시
+                    meta_col1, meta_col2 = st.columns([2, 1])
+                    with meta_col1:
+                        st.caption(f"📅 **생성일시:** {selected_row['timestamp']}")
+                    with meta_col2:
+                        st.markdown(f'<div class="style-tag">{selected_row["style"]}</div>', unsafe_allow_html=True)
+
+                    st.markdown(f"**💡 컨셉:** {theme}")
 
                     st.divider()
 
@@ -1093,7 +1137,7 @@ with tab2:
                                 "제목 (Ctrl+A → Ctrl+C)",
                                 value=title,
                                 height=60,
-                                key=f"h_title_copy_{unique_key}",
+                                key=f"h_title_{unique_key}",
                                 label_visibility="collapsed"
                             )
 
@@ -1104,36 +1148,39 @@ with tab2:
                         if st.session_state.get(f"h_show_lyrics_{unique_key}", False):
                             st.text_area(
                                 "가사 (Ctrl+A → Ctrl+C)",
-                                value=lyrics_content,
+                                value=lyrics,
                                 height=300,
-                                key=f"h_lyrics_copy_{unique_key}",
+                                key=f"h_lyrics_{unique_key}",
                                 label_visibility="collapsed"
                             )
 
                     with col_c:
-                        combined = f"Title: {title}\n\n{lyrics_content}"
+                        combined = f"Title: {title}\n\n{lyrics}"
                         if st.button("📋 전체 복사", key=f"h_all_btn_{unique_key}"):
                             st.session_state[f"h_show_combined_{unique_key}"] = True
 
                         if st.session_state.get(f"h_show_combined_{unique_key}", False):
                             st.text_area(
-                                "제목+가사 (Ctrl+A → Ctrl+C)",
+                                "전체 (Ctrl+A → Ctrl+C)",
                                 value=combined,
                                 height=300,
-                                key=f"h_combined_copy_{unique_key}",
+                                key=f"h_combined_{unique_key}",
                                 label_visibility="collapsed"
                             )
 
                     st.divider()
                     st.subheader("📝 가사 내용")
-                    st.text(lyrics_content)
+                    st.markdown(f'<div class="lyrics-display">{lyrics}</div>', unsafe_allow_html=True)
+
+                else:
+                    st.info("👈 좌측 목록에서 곡을 선택해주세요.")
 
                 st.markdown('</div>', unsafe_allow_html=True)
 
-# ==================== 푸터 ====================
+# 푸터
 st.divider()
 st.markdown("""
-<div style='text-align: center; color: #666; padding: 20px;'>
-    🎵 Found Studio | Gemini 2.5 Flash + 이력 관리 시스템
+<div style='text-align: center; color: #9AA0A6; padding: 20px;'>
+    🎵 Found Studio | Powered by Gemini 2.5 Flash
 </div>
 """, unsafe_allow_html=True)
