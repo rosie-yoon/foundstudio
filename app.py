@@ -6,30 +6,67 @@ import os
 import pandas as pd
 from datetime import datetime
 
+
+# ==================== 유틸리티 함수: 가사 정리 ====================
+def clean_lyrics_output(raw_lyrics):
+    """
+    AI가 생성한 가사에서 Title, Theme Description 등 메타데이터를 제거하고
+    순수한 가사 구조([Verse], [Chorus] 등)만 반환
+    """
+    if not raw_lyrics:
+        return ""
+
+    lines = raw_lyrics.strip().split('\n')
+    cleaned_lines = []
+    lyrics_started = False
+
+    for line in lines:
+        stripped_line = line.strip()
+
+        # 빈 줄은 가사 시작 후에만 유지
+        if not stripped_line:
+            if lyrics_started:
+                cleaned_lines.append(line)
+            continue
+
+        # 메타데이터 줄들 건너뛰기
+        lower_line = stripped_line.lower()
+        if any(lower_line.startswith(prefix) for prefix in [
+            'title:', 'theme:', 'theme description:', 'concept:',
+            'style:', 'mood:', 'genre:', 'description:', 'song:', 'track:'
+        ]):
+            continue
+
+        # [Verse], [Chorus] 등이 나오면 가사 시작으로 판단
+        if stripped_line.startswith('[') and any(tag in lower_line for tag in [
+            'verse', 'chorus', 'pre-chorus', 'bridge', 'intro', 'outro', 'final', 'hook'
+        ]):
+            lyrics_started = True
+
+        if lyrics_started:
+            cleaned_lines.append(line)
+
+    # 태그를 못 찾았으면 원본 반환 (안전장치)
+    if not cleaned_lines:
+        return raw_lyrics.strip()
+
+    return '\n'.join(cleaned_lines).strip()
+
+
 # ==================== API 키 설정 ====================
-# 1순위: Streamlit Cloud Secrets (배포 환경)
 try:
     API_KEY = st.secrets.get("GEMINI_API_KEY", None)
 except Exception:
     API_KEY = None
 
-# 2순위: 로컬 .env 파일 (개발 환경)
 if not API_KEY:
     try:
         from dotenv import load_dotenv
+
         load_dotenv()
         API_KEY = os.getenv('GEMINI_API_KEY')
     except ImportError:
         API_KEY = None
-
-# ❌ 이런 줄이 있으면 반드시 삭제!
-# if not API_KEY:
-#     API_KEY = "AIzaSy..."  <- 하드코딩 금지
-
-if not API_KEY or not API_KEY.strip():
-    st.error("❌ GEMINI_API_KEY가 설정되지 않았습니다.")
-    st.stop()
-
 
 # ==================== 파일 저장소 설정 ====================
 HISTORY_FILE = "lyrics_history.csv"
@@ -48,13 +85,13 @@ def save_to_history(genre, style, songs_data):
             "genre": genre,
             "style": style,
             "title": song['title'],
-            "theme_ko": song['theme'],
+            "theme": song.get('theme', ''),
+            "theme_ko": song.get('theme', ''),
             "lyrics": song['lyrics']
         })
 
     df_new = pd.DataFrame(new_records)
 
-    # 기존 파일이 있으면 합치기
     if os.path.exists(HISTORY_FILE):
         try:
             df_old = pd.read_csv(HISTORY_FILE, encoding='utf-8-sig')
@@ -64,7 +101,6 @@ def save_to_history(genre, style, songs_data):
     else:
         df_combined = df_new
 
-    # 저장 (최신 1000곡만 유지하여 파일 크기 관리)
     df_combined = df_combined.head(1000)
     df_combined.to_csv(HISTORY_FILE, index=False, encoding='utf-8-sig')
 
@@ -84,14 +120,34 @@ def load_history():
 def get_recent_titles(limit=50):
     """최근 생성된 제목들 가져오기 (중복 방지용)"""
     df = load_history()
-    if not df.empty:
+    if not df.empty and 'title' in df.columns:
         return df.head(limit)['title'].tolist()
     return []
 
 
+# ==================== 세션 상태 초기화 ====================
+def init_session_state():
+    if 'current_step' not in st.session_state:
+        st.session_state.current_step = 1
+    if 'selected_genre' not in st.session_state:
+        st.session_state.selected_genre = None
+    if 'selected_style' not in st.session_state:
+        st.session_state.selected_style = None
+    if 'num_songs' not in st.session_state:
+        st.session_state.num_songs = 3
+    if 'setlist' not in st.session_state:
+        st.session_state.setlist = []
+    if 'generated_lyrics' not in st.session_state:
+        st.session_state.generated_lyrics = []
+    if 'generation_count' not in st.session_state:
+        st.session_state.generation_count = 0
+
+
+init_session_state()
+
 # ==================== 페이지 설정 ====================
 st.set_page_config(
-    page_title="Found Studio",
+    page_title="🎵 AI 작사 스튜디오 Pro",
     page_icon="🎵",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -112,14 +168,6 @@ st.markdown("""
         margin: 15px 0;
         border-left: 4px solid #FF4B4B;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-    }
-
-    .history-card {
-        background-color: #262730;
-        border-radius: 8px;
-        padding: 15px;
-        margin-bottom: 10px;
-        border: 1px solid #444;
     }
 
     .style-tag {
@@ -175,7 +223,13 @@ Verse 1 -> Pre-Chorus -> Chorus -> Verse 2 -> Pre-Chorus -> Chorus -> Bridge -> 
 WRITING STYLE: Natural, conversational, emotionally believable, simple but memorable
 BANNED WORDS: neon, velvet, echoes
 
-OUTPUT FORMAT: Clean title and complete lyrics structure."""
+CRITICAL OUTPUT REQUIREMENTS:
+- DO NOT include "Title:" line in your response
+- DO NOT include "Theme Description:" or any descriptive text
+- START your response directly with [Verse 1] or [Intro]
+- Output ONLY the lyrics structure with section tags
+
+OUTPUT FORMAT: Pure lyrics only, starting with [Verse 1]."""
             },
 
             "Dandelion Style": {
@@ -198,38 +252,23 @@ Verse 1 -> Pre-Chorus -> Chorus -> Verse 2 -> Pre-Chorus -> Chorus -> Bridge -> 
 WRITING STYLE: Natural, conversational, emotionally believable, simple but memorable
 BANNED WORDS: neon, velvet, echoes
 
-OUTPUT FORMAT: Clean title and complete lyrics structure."""
+CRITICAL OUTPUT REQUIREMENTS:
+- DO NOT include "Title:" line in your response
+- DO NOT include "Theme Description:" or any descriptive text
+- START your response directly with [Verse 1] or [Intro]
+- Output ONLY the lyrics structure with section tags
+
+OUTPUT FORMAT: Pure lyrics only, starting with [Verse 1]."""
             }
         }
     }
 }
 
-
-# ==================== 세션 상태 초기화 ====================
-def init_session_state():
-    if 'current_step' not in st.session_state:
-        st.session_state.current_step = 1
-    if 'selected_genre' not in st.session_state:
-        st.session_state.selected_genre = None
-    if 'selected_style' not in st.session_state:
-        st.session_state.selected_style = None
-    if 'num_songs' not in st.session_state:
-        st.session_state.num_songs = 3
-    if 'setlist' not in st.session_state:
-        st.session_state.setlist = []
-    if 'generated_lyrics' not in st.session_state:
-        st.session_state.generated_lyrics = []
-    if 'generation_count' not in st.session_state:
-        st.session_state.generation_count = 0
-
-
-init_session_state()
-
 # ==================== 메인 UI ====================
-st.title("🎵 Found Studio")
+st.title("🎵 AI 작사 스튜디오 Pro")
 st.markdown("**Gemini AI 기반 프로페셔널 Urban R&B 작사 도구 + 이력 관리**")
 
-# API 키 확인
+# API 키 확인 및 설정
 if API_KEY and API_KEY.strip():
     try:
         genai.configure(api_key=API_KEY.strip())
@@ -245,7 +284,6 @@ tab1, tab2 = st.tabs(["✍️ 작사하기", "📚 이력 보기"])
 
 # ==================== TAB 1: 작사하기 ====================
 with tab1:
-    # 사이드바: 진행 상태 및 통계
     with st.sidebar:
         st.header("📊 진행 상황")
         steps = [
@@ -267,23 +305,13 @@ with tab1:
 
         st.divider()
 
-        # 통계 정보
         st.header("📈 통계")
         total_history = len(load_history())
         st.metric("전체 생성 곡수", total_history)
         st.metric("이번 세션", st.session_state.generation_count)
 
-        # 최근 이력 미리보기
-        if total_history > 0:
-            st.header("🕒 최근 생성")
-            recent_df = load_history().head(3)
-            for _, row in recent_df.iterrows():
-                st.markdown(f"🎵 **{row['title']}**")
-                st.caption(f"{row['timestamp']} | {row['style']}")
-
         st.divider()
 
-        # 리셋 버튼
         if st.button("🔄 처음부터 다시 시작", type="secondary"):
             for key in ['current_step', 'selected_genre', 'selected_style', 'setlist', 'generated_lyrics']:
                 if key in st.session_state:
@@ -369,14 +397,12 @@ with tab1:
 
         st.info(f"{st.session_state.selected_style} 스타일로 {st.session_state.num_songs}곡의 컨셉을 만듭니다.")
 
-        # 중복 방지를 위한 최근 제목 확인
         recent_titles = get_recent_titles(50)
         if recent_titles:
             with st.expander("📋 최근 생성된 제목들 (중복 방지 참고용)"):
                 st.write("AI가 다양한 제목을 생성할 수 있도록 최근 제목들을 참고합니다:")
                 st.write(", ".join(recent_titles[:20]) + ("..." if len(recent_titles) > 20 else ""))
 
-        # 자동 생성
         if st.button("🎲 AI 자동 생성 (제목: 영어 / 컨셉: 한글)", type="primary"):
             with st.spinner("AI가 곡 아이디어를 구상하고 있습니다..."):
                 try:
@@ -385,7 +411,6 @@ with tab1:
                     style_info = GENRE_PROMPTS[st.session_state.selected_genre]['styles'][
                         st.session_state.selected_style]
 
-                    # 중복 방지를 위한 프롬프트 보강
                     avoid_titles_text = ""
                     if recent_titles:
                         avoid_titles_text = f"\n\nIMPORTANT: Avoid creating titles too similar to these recent ones: {', '.join(recent_titles[:15])}\nCreate fresh, unique titles that feel different from the above list."
@@ -412,7 +437,6 @@ Output as JSON:
 
                     response = model.generate_content(concept_prompt)
 
-                    # JSON 파싱
                     text = response.text.strip()
                     if text.startswith("```json"):
                         text = text[7:-3]
@@ -424,13 +448,11 @@ Output as JSON:
                     st.success("✅ 컨셉 생성 완료!")
 
                 except Exception as e:
-                    st.error(f"컨셉 생성 중 오류 발생: {str(e)}")
+                    st.error(f"컨셉 생성 중 오류: {str(e)}")
 
-        # 셋리스트가 준비되면 다음 단계로
         if st.session_state.setlist:
             st.subheader("📋 확정된 셋리스트 (제목: 영어 / 컨셉: 한글)")
 
-            # 데이터 편집기로 수정 가능
             edited_setlist = st.data_editor(
                 st.session_state.setlist,
                 use_container_width=True,
@@ -462,7 +484,6 @@ Output as JSON:
         st.markdown(f"**총 {len(st.session_state.setlist)}곡 생성을 시작합니다.**")
         st.markdown(f"**스타일:** {st.session_state.selected_genre} - {st.session_state.selected_style}")
 
-        # 진행률 표시
         progress_bar = st.progress(0)
         status_text = st.empty()
         generated_songs = []
@@ -482,43 +503,21 @@ Theme/Concept: {song['theme']}
 
 Write complete English lyrics for this song following all the guidelines above.
 
-Output format:
-Title: {song['title']}
-
-[Verse 1]
-...
-
-[Pre-Chorus]  
-...
-
-[Chorus]
-...
-
-[Verse 2]
-...
-
-[Pre-Chorus]
-...
-
-[Chorus]
-...
-
-[Bridge]
-...
-
-[Final Chorus]
-...
+Remember: Start directly with [Verse 1], do NOT include title or theme description in output.
 """
 
             try:
                 response = model.generate_content(lyrics_prompt)
-                lyrics = response.text.strip()
+                raw_lyrics = response.text.strip()
+
+                # 메타데이터 제거하고 순수 가사만 추출
+                clean_lyrics = clean_lyrics_output(raw_lyrics)
 
                 generated_songs.append({
                     "title": song['title'],
                     "theme": song['theme'],
                     "style": st.session_state.selected_style,
-                    "lyrics": lyrics
+                    "lyrics": clean_lyrics
                 })
 
             except Exception as e:
@@ -531,12 +530,10 @@ Title: {song['title']}
                 })
 
             progress_bar.progress((idx + 1) / len(st.session_state.setlist))
-            time.sleep(1)  # API 안정성을 위한 대기
+            time.sleep(1)
 
-        # 결과 저장 및 이력에 추가
         st.session_state.generated_lyrics = generated_songs
 
-        # 자동 저장
         try:
             saved_count = save_to_history(
                 st.session_state.selected_genre,
@@ -553,20 +550,18 @@ Title: {song['title']}
         time.sleep(1)
         st.rerun()
 
-    # STEP 6: 결과 표시 및 복사
+    # STEP 6: 결과 표시
     elif st.session_state.current_step == 6:
         st.header("6️⃣ 생성 완료! (자동 저장됨)")
 
         if not st.session_state.generated_lyrics:
-            st.error("생성된 가사가 없습니다. 다시 시도해주세요.")
+            st.error("생성된 가사가 없습니다.")
         else:
             st.success(f"🎉 총 {len(st.session_state.generated_lyrics)}곡의 가사가 완성되어 이력에 저장되었습니다!")
 
-            # 전체 다운로드 및 작업 버튼
             col1, col2, col3 = st.columns([1, 1, 1])
 
             with col1:
-                # 전체 가사 텍스트 생성
                 all_lyrics_text = "\n\n" + "=" * 80 + "\n\n".join([
                     f"제목: {song['title']}\n컨셉: {song['theme']}\n\n{song['lyrics']}"
                     for song in st.session_state.generated_lyrics
@@ -593,11 +588,9 @@ Title: {song['title']}
 
             st.info("💡 각 곡을 클릭하여 펼치고, Suno에 복사하세요.")
 
-            # 각 곡을 아코디언 방식으로 표시
             for idx, song in enumerate(st.session_state.generated_lyrics, 1):
                 with st.expander(f"🎵 {idx}. {song['title']}", expanded=(idx == 1)):
 
-                    # 메타 정보
                     col_info, col_style = st.columns([2, 1])
                     with col_info:
                         st.markdown(f"**컨셉/주제:** {song['theme']}")
@@ -606,7 +599,6 @@ Title: {song['title']}
 
                     st.divider()
 
-                    # 복사 버튼들
                     col1, col2, col3 = st.columns(3)
 
                     with col1:
@@ -622,7 +614,6 @@ Title: {song['title']}
                         if st.button("📋 전체 복사 (제목+가사)", key=f"copy_all_{idx}"):
                             st.code(combined_text, language="text")
 
-                    # 가사 표시
                     st.subheader("가사 내용 (Lyrics)")
                     st.text(song['lyrics'])
 
@@ -634,13 +625,11 @@ with tab2:
     df_history = load_history()
 
     if df_history.empty:
-        st.warning("아직 저장된 이력이 없습니다. 가사를 생성하면 여기에 자동으로 저장됩니다.")
+        st.warning("아직 저장된 이력이 없습니다.")
     else:
-        # 필터링 옵션
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            # 날짜 필터 (안전한 접근)
             if 'timestamp' in df_history.columns:
                 unique_dates = df_history['timestamp'].astype(str).str[:10].unique()
                 selected_date = st.selectbox("📅 날짜 선택", ["전체"] + sorted(unique_dates, reverse=True))
@@ -648,7 +637,6 @@ with tab2:
                 selected_date = "전체"
 
         with col2:
-            # 스타일 필터 (안전한 접근)
             if 'style' in df_history.columns:
                 unique_styles = df_history['style'].unique()
                 selected_style = st.selectbox("🎭 스타일 필터", ["전체"] + list(unique_styles))
@@ -656,10 +644,8 @@ with tab2:
                 selected_style = "전체"
 
         with col3:
-            # 검색
             search_term = st.text_input("🔍 제목 검색", placeholder="제목으로 검색...")
 
-        # 필터 적용 (안전한 방식)
         filtered_df = df_history.copy()
 
         if selected_date != "전체" and 'timestamp' in filtered_df.columns:
@@ -671,7 +657,6 @@ with tab2:
         if search_term and 'title' in filtered_df.columns:
             filtered_df = filtered_df[filtered_df['title'].astype(str).str.contains(search_term, case=False, na=False)]
 
-        # 결과 표시
         st.divider()
 
         if filtered_df.empty:
@@ -679,13 +664,10 @@ with tab2:
         else:
             st.success(f"📊 총 {len(filtered_df)}곡이 검색되었습니다.")
 
-            # 세션별 그룹화 (session_id 없으면 timestamp 사용)
             if 'session_id' not in filtered_df.columns:
                 filtered_df['session_id'] = filtered_df['timestamp']
 
             sessions = filtered_df.groupby('session_id')
-
-            # 최신순 정렬
             sorted_sessions = sorted(sessions, key=lambda x: x[1]['timestamp'].max(), reverse=True)
 
             for session_id, session_df in sorted_sessions:
@@ -700,15 +682,14 @@ with tab2:
                         expanded=False
                 ):
                     for idx, (_, song) in enumerate(session_df.iterrows(), 1):
-                        # 안전한 데이터 접근 (핵심 수정 부분)
                         title = str(song.get('title', 'Untitled'))
                         theme_content = song.get('theme_ko', song.get('theme', '컨셉 정보 없음'))
-                        lyrics_content = str(song.get('lyrics', ''))
+                        raw_lyrics_content = str(song.get('lyrics', ''))
+                        lyrics_content = clean_lyrics_output(raw_lyrics_content)
 
                         st.markdown(f"### 🎵 {idx}. {title}")
                         st.markdown(f"**컨셉:** {theme_content}")
 
-                        # 복사 버튼 (고유 키 생성)
                         col_a, col_b, col_c = st.columns(3)
                         unique_key = f"{session_id}_{idx}_{hash(str(song.name))}"
 
@@ -725,7 +706,6 @@ with tab2:
                             if st.button("📋 전체 복사", key=f"h_all_{unique_key}"):
                                 st.code(combined, language="text")
 
-                        # 가사 표시
                         with st.expander("가사 내용 보기", expanded=False):
                             st.text(lyrics_content)
 
@@ -735,6 +715,6 @@ with tab2:
 st.divider()
 st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
-    🎵 Found Studio
+    🎵 AI 작사 스튜디오 Pro | Gemini 2.5 Flash + 이력 관리 시스템
 </div>
 """, unsafe_allow_html=True)
