@@ -226,7 +226,7 @@ def init_session_state():
 init_session_state()
 
 # ==================== 메인 UI ====================
-st.title("🎵 AI 작사 스튜디오 Pro")
+st.title("🎵 Found Studio")
 st.markdown("**Gemini AI 기반 프로페셔널 Urban R&B 작사 도구 + 이력 관리**")
 
 # API 키 확인
