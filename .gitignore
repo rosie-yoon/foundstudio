@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+*.egg-info/
+
+# 환경 변수 및 개인 데이터
+.env
+lyrics_history.csv
+
+# Streamlit 설정
+.streamlit/secrets.toml
+
+# IDE 및 시스템
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.log
