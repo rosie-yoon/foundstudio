@@ -7,26 +7,32 @@ import pandas as pd
 from datetime import datetime
 
 # ==================== API 키 설정 ====================
-# Streamlit Cloud Secrets 우선, 없으면 .env 파일 사용
+# 1순위: Streamlit Cloud Secrets (배포 환경)
 try:
-    # Streamlit Cloud Secrets에서 가져오기
     API_KEY = st.secrets.get("GEMINI_API_KEY", None)
-except:
+except Exception:
     API_KEY = None
 
+# 2순위: 로컬 .env 파일 (개발 환경)
 if not API_KEY:
     try:
-        # 로컬 .env 파일에서 가져오기
         from dotenv import load_dotenv
         load_dotenv()
         API_KEY = os.getenv('GEMINI_API_KEY')
     except ImportError:
-        pass
+        API_KEY = None
 
-if not API_KEY:
-    # 최후 수단 (로컬 개발용)
-    API_KEY = "AIzaSyDO-YvLPDuU5GymwusvVlS9bEE59yP5K3E"
+# API 키 검증
+if not API_KEY or not API_KEY.strip():
+    st.error("❌ GEMINI_API_KEY가 설정되지 않았습니다.")
+    st.markdown("""
+    **해결 방법:**
+    - **Streamlit Cloud**: App Settings → Secrets에서 설정
+    - **로컬 실행**: .env 파일에 `GEMINI_API_KEY=본인키` 입력
+    """)
+    st.stop()
 
+# ❌ 절대로 API 키를 코드에 직접 입력하지 마세요!
 
 # ==================== 파일 저장소 설정 ====================
 HISTORY_FILE = "lyrics_history.csv"
