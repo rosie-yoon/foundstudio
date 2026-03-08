@@ -127,6 +127,7 @@ except Exception:
 if not API_KEY:
     try:
         from dotenv import load_dotenv
+
         load_dotenv()
         API_KEY = os.getenv('GEMINI_API_KEY')
     except ImportError:
@@ -219,7 +220,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ==================== CSS 스타일 ====================
+# ==================== ✨ 개선된 CSS (독립 스크롤) ====================
 st.markdown("""
 <style>
     .stApp {
@@ -262,10 +263,55 @@ st.markdown("""
         background-color: var(--google-blue-dark) !important;
     }
 
-    [data-testid="column"] {
-        height: 80vh !important;
-        display: flex !important;
-        flex-direction: column !important;
+    /* ✅ 핵심: 독립 스크롤 영역 */
+    .song-list-scroll {
+        max-height: 70vh;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 8px;
+        border-right: 2px solid #333;
+    }
+
+    .history-list-scroll {
+        max-height: 70vh;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 8px;
+        border-right: 2px solid #333;
+    }
+
+    .detail-scroll {
+        max-height: 70vh;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-left: 20px;
+    }
+
+    /* 스크롤바 디자인 */
+    .song-list-scroll::-webkit-scrollbar,
+    .history-list-scroll::-webkit-scrollbar,
+    .detail-scroll::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    .song-list-scroll::-webkit-scrollbar-track,
+    .history-list-scroll::-webkit-scrollbar-track,
+    .detail-scroll::-webkit-scrollbar-track {
+        background: #1E1E1E;
+        border-radius: 4px;
+    }
+
+    .song-list-scroll::-webkit-scrollbar-thumb,
+    .history-list-scroll::-webkit-scrollbar-thumb,
+    .detail-scroll::-webkit-scrollbar-thumb {
+        background: var(--google-blue);
+        border-radius: 4px;
+    }
+
+    .song-list-scroll::-webkit-scrollbar-thumb:hover,
+    .history-list-scroll::-webkit-scrollbar-thumb:hover,
+    .detail-scroll::-webkit-scrollbar-thumb:hover {
+        background: var(--google-blue-hover);
     }
 
     .song-card {
@@ -360,7 +406,7 @@ OUTPUT FORMAT: Pure lyrics only, starting with [Verse 1]."""
 
 # ==================== 메인 UI ====================
 st.title("Found Studio")
-st.markdown("**Gemini AI 기반 프로페셔널 Urban R&B 작사 도구**")
+# ✅ 서브타이틀 제거됨
 
 # API 키 확인
 if API_KEY and API_KEY.strip():
@@ -407,7 +453,8 @@ with tab1:
         st.divider()
 
         if st.button("🔄 처음부터 다시 시작", type="secondary"):
-            for key in ['current_step', 'selected_genre', 'selected_style', 'setlist', 'generated_lyrics', 'selected_song_index']:
+            for key in ['current_step', 'selected_genre', 'selected_style', 'setlist', 'generated_lyrics',
+                        'selected_song_index']:
                 if key in st.session_state:
                     del st.session_state[key]
             init_session_state()
@@ -474,7 +521,8 @@ with tab1:
             with st.spinner("AI가 곡 아이디어를 구상하고 있습니다..."):
                 try:
                     model = genai.GenerativeModel('models/gemini-2.5-flash')
-                    style_info = GENRE_PROMPTS[st.session_state.selected_genre]['styles'][st.session_state.selected_style]
+                    style_info = GENRE_PROMPTS[st.session_state.selected_genre]['styles'][
+                        st.session_state.selected_style]
 
                     avoid_titles_text = ""
                     if recent_titles:
@@ -578,7 +626,8 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
         st.session_state.generated_lyrics = generated_songs
 
         try:
-            saved_count = save_to_history(st.session_state.selected_genre, st.session_state.selected_style, generated_songs)
+            saved_count = save_to_history(st.session_state.selected_genre, st.session_state.selected_style,
+                                          generated_songs)
             st.session_state.generation_count += saved_count
             st.toast(f"✅ {saved_count}곡이 이력에 자동 저장되었습니다!", icon="💾")
         except Exception as e:
@@ -589,7 +638,7 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
         time.sleep(1)
         st.rerun()
 
-    # ==================== ✅ STEP 6: st.code() 복사 기능 적용 ====================
+    # ==================== ✅ STEP 6: 완벽한 스크롤 UI ====================
     elif st.session_state.current_step == 6:
         st.header("6️⃣ 생성 완료!")
 
@@ -625,172 +674,178 @@ Remember: Start directly with [Verse 1], do NOT include title or theme descripti
             # 병렬 배치
             left_col, right_col = st.columns([3, 7], gap="large")
 
-            # 좌측: 곡 목록
+            # ✅ 좌측: 스크롤 가능한 곡 목록
             with left_col:
-                with st.container():
-                    st.subheader("곡 목록")
+                st.subheader("곡 목록")
 
-                    for idx, song in enumerate(st.session_state.generated_lyrics):
-                        is_selected = (st.session_state.selected_song_index == idx)
+                st.markdown('<div class="song-list-scroll">', unsafe_allow_html=True)
 
-                        if st.button(
-                                song['title'],
-                                key=f"song_btn_{idx}",
-                                type="primary" if is_selected else "secondary",
-                                use_container_width=True
-                        ):
-                            st.session_state.selected_song_index = idx
+                for idx, song in enumerate(st.session_state.generated_lyrics):
+                    is_selected = (st.session_state.selected_song_index == idx)
+
+                    if st.button(
+                            song['title'],
+                            key=f"song_btn_{idx}",
+                            type="primary" if is_selected else "secondary",
+                            use_container_width=True
+                    ):
+                        st.session_state.selected_song_index = idx
+                        st.rerun()
+
+                st.markdown('</div>', unsafe_allow_html=True)
+
+            # ✅ 우측: 스크롤 가능한 상세 정보
+            with right_col:
+                st.markdown('<div class="detail-scroll">', unsafe_allow_html=True)
+
+                if 0 <= st.session_state.selected_song_index < len(st.session_state.generated_lyrics):
+                    song = st.session_state.generated_lyrics[st.session_state.selected_song_index]
+                    idx = st.session_state.selected_song_index
+
+                    st.subheader(song['title'])
+
+                    meta_col1, meta_col2 = st.columns([2, 1])
+                    with meta_col1:
+                        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        st.caption(f"📅 생성일시: {current_time}")
+                    with meta_col2:
+                        st.markdown(f'<div class="style-tag">{song["style"]}</div>', unsafe_allow_html=True)
+
+                    st.markdown(f"**💡 컨셉:** {song['theme']}")
+                    st.divider()
+
+                    # ✅ 안내 박스 제거됨 - st.code()만 표시
+
+                    copy_col1, copy_col2 = st.columns(2)
+
+                    with copy_col1:
+                        st.markdown("**📋 제목 (Title)**")
+                        st.code(song['title'], language="text")
+
+                    with copy_col2:
+                        st.markdown("**📋 전체 (제목 + 가사)**")
+                        combined_text = f"Title: {song['title']}\n\n{song['lyrics']}"
+                        st.code(combined_text, language="text")
+
+                    st.markdown("**📝 가사 (Lyrics)**")
+                    st.code(song['lyrics'], language="text")
+
+                    # Suno 생성 기능
+                    st.divider()
+                    st.subheader("🎼 Suno AI 음악 생성")
+
+                    suno_key = f"suno_state_{idx}"
+                    if suno_key not in st.session_state:
+                        st.session_state[suno_key] = {
+                            'status': 'ready',
+                            'audio_ids': [],
+                            'audio_urls': [],
+                            'error_message': '',
+                            'generation_count': 0
+                        }
+
+                    suno_state = st.session_state[suno_key]
+
+                    # Suno API 상태 확인
+                    api_connected = False
+                    if SUNO_API_URL:
+                        try:
+                            health_resp = requests.get(f"{SUNO_API_URL}/api/get_limit", timeout=2)
+                            if health_resp.status_code == 200:
+                                api_connected = True
+                        except:
+                            pass
+
+                    if api_connected:
+                        st.success("✅ Suno API 서버 연결됨")
+                    else:
+                        st.error("❌ Suno API 서버 미연결")
+
+                    # 상태별 UI
+                    if suno_state['status'] == 'ready':
+                        if st.button("🎵 음악 생성 시작 (2곡)", key=f"suno_gen_{idx}", disabled=not api_connected,
+                                     type="primary"):
+                            with st.spinner("🎵 Suno AI가 음악을 생성하고 있습니다..."):
+                                ids, error = generate_music_with_suno(song['title'], song['lyrics'], song['style'])
+                                if error:
+                                    suno_state['status'] = 'error'
+                                    suno_state['error_message'] = error
+                                else:
+                                    suno_state['status'] = 'generating'
+                                    suno_state['audio_ids'] = ids
+                                    suno_state['generation_count'] += 1
+                                st.rerun()
+
+                    elif suno_state['status'] == 'generating':
+                        st.warning("🎵 음악 생성 중...")
+                        if st.button("🔄 완성 상태 확인", key=f"suno_check_{idx}", type="primary"):
+                            status_data, error = check_suno_status(suno_state['audio_ids'])
+                            if status_data:
+                                completed_tracks = []
+                                for track in status_data:
+                                    if track.get('status') in ['streaming', 'complete'] and track.get('audio_url'):
+                                        completed_tracks.append({
+                                            'id': track['id'],
+                                            'audio_url': track['audio_url'],
+                                            'video_url': track.get('video_url'),
+                                            'image_url': track.get('image_url'),
+                                            'title': track.get('title', song['title']),
+                                            'duration': track.get('duration', 0)
+                                        })
+
+                                if completed_tracks:
+                                    suno_state['status'] = 'completed'
+                                    suno_state['audio_urls'] = completed_tracks
+                                    st.success("✅ 음악 생성 완료!")
+                                    st.rerun()
+                                else:
+                                    st.info("🎵 아직 생성 중입니다...")
+
+                    elif suno_state['status'] == 'completed':
+                        st.success(f"✅ 음악 생성 완료! ({len(suno_state['audio_urls'])}개 버전)")
+
+                        if len(suno_state['audio_urls']) >= 2:
+                            col_v1, col_v2 = st.columns(2)
+
+                            with col_v1:
+                                track1 = suno_state['audio_urls'][0]
+                                st.markdown("### 🎵 버전 1")
+                                if track1.get('image_url'):
+                                    st.image(track1['image_url'], width=200)
+                                if track1['audio_url']:
+                                    st.audio(track1['audio_url'])
+                                    st.markdown(f"[📥 오디오 다운로드]({track1['audio_url']})")
+
+                            with col_v2:
+                                track2 = suno_state['audio_urls'][1]
+                                st.markdown("### 🎵 버전 2")
+                                if track2.get('image_url'):
+                                    st.image(track2['image_url'], width=200)
+                                if track2['audio_url']:
+                                    st.audio(track2['audio_url'])
+                                    st.markdown(f"[📥 오디오 다운로드]({track2['audio_url']})")
+
+                        if st.button("🔄 다시 생성하기", key=f"suno_regen_{idx}"):
+                            suno_state['status'] = 'ready'
+                            suno_state['audio_ids'] = []
+                            suno_state['audio_urls'] = []
                             st.rerun()
 
-            # 우측: 상세 정보 + ✅ st.code() 복사 기능
-            with right_col:
-                with st.container():
-                    if 0 <= st.session_state.selected_song_index < len(st.session_state.generated_lyrics):
-                        song = st.session_state.generated_lyrics[st.session_state.selected_song_index]
-                        idx = st.session_state.selected_song_index
+                    elif suno_state['status'] == 'error':
+                        st.error("❌ 음악 생성 중 오류 발생")
+                        st.code(suno_state['error_message'])
+                        if st.button("🔄 다시 시도", key=f"suno_retry_{idx}"):
+                            suno_state['status'] = 'ready'
+                            suno_state['error_message'] = ''
+                            st.rerun()
+                else:
+                    st.info("👈 좌측에서 곡을 선택해주세요.")
 
-                        st.subheader(song['title'])
+                st.markdown('</div>', unsafe_allow_html=True)
 
-                        meta_col1, meta_col2 = st.columns([2, 1])
-                        with meta_col1:
-                            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            st.caption(f"📅 생성일시: {current_time}")
-                        with meta_col2:
-                            st.markdown(f'<div class="style-tag">{song["style"]}</div>', unsafe_allow_html=True)
-
-                        st.markdown(f"**💡 컨셉:** {song['theme']}")
-                        st.divider()
-
-                        # ✅ st.code() 복사 기능 (우측 상단 복사 아이콘 자동 생성)
-                        st.info("💡 각 박스 우측 상단의 복사 아이콘을 클릭하세요!")
-
-                        copy_col1, copy_col2 = st.columns(2)
-
-                        with copy_col1:
-                            st.markdown("**📋 제목 (Title)**")
-                            st.code(song['title'], language="text")
-
-                        with copy_col2:
-                            st.markdown("**📋 전체 (제목 + 가사)**")
-                            combined_text = f"Title: {song['title']}\n\n{song['lyrics']}"
-                            st.code(combined_text, language="text")
-
-                        st.markdown("**📝 가사 (Lyrics)**")
-                        st.code(song['lyrics'], language="text")
-
-                        # Suno 생성 기능
-                        st.divider()
-                        st.subheader("🎼 Suno AI 음악 생성")
-
-                        suno_key = f"suno_state_{idx}"
-                        if suno_key not in st.session_state:
-                            st.session_state[suno_key] = {
-                                'status': 'ready',
-                                'audio_ids': [],
-                                'audio_urls': [],
-                                'error_message': '',
-                                'generation_count': 0
-                            }
-
-                        suno_state = st.session_state[suno_key]
-
-                        # Suno API 상태 확인
-                        api_connected = False
-                        if SUNO_API_URL:
-                            try:
-                                health_resp = requests.get(f"{SUNO_API_URL}/api/get_limit", timeout=2)
-                                if health_resp.status_code == 200:
-                                    api_connected = True
-                            except:
-                                pass
-
-                        if api_connected:
-                            st.success("✅ Suno API 서버 연결됨")
-                        else:
-                            st.error("❌ Suno API 서버 미연결")
-
-                        # 상태별 UI
-                        if suno_state['status'] == 'ready':
-                            if st.button("🎵 음악 생성 시작 (2곡)", key=f"suno_gen_{idx}", disabled=not api_connected, type="primary"):
-                                with st.spinner("🎵 Suno AI가 음악을 생성하고 있습니다..."):
-                                    ids, error = generate_music_with_suno(song['title'], song['lyrics'], song['style'])
-                                    if error:
-                                        suno_state['status'] = 'error'
-                                        suno_state['error_message'] = error
-                                    else:
-                                        suno_state['status'] = 'generating'
-                                        suno_state['audio_ids'] = ids
-                                        suno_state['generation_count'] += 1
-                                    st.rerun()
-
-                        elif suno_state['status'] == 'generating':
-                            st.warning("🎵 음악 생성 중...")
-                            if st.button("🔄 완성 상태 확인", key=f"suno_check_{idx}", type="primary"):
-                                status_data, error = check_suno_status(suno_state['audio_ids'])
-                                if status_data:
-                                    completed_tracks = []
-                                    for track in status_data:
-                                        if track.get('status') in ['streaming', 'complete'] and track.get('audio_url'):
-                                            completed_tracks.append({
-                                                'id': track['id'],
-                                                'audio_url': track['audio_url'],
-                                                'video_url': track.get('video_url'),
-                                                'image_url': track.get('image_url'),
-                                                'title': track.get('title', song['title']),
-                                                'duration': track.get('duration', 0)
-                                            })
-
-                                    if completed_tracks:
-                                        suno_state['status'] = 'completed'
-                                        suno_state['audio_urls'] = completed_tracks
-                                        st.success("✅ 음악 생성 완료!")
-                                        st.rerun()
-                                    else:
-                                        st.info("🎵 아직 생성 중입니다...")
-
-                        elif suno_state['status'] == 'completed':
-                            st.success(f"✅ 음악 생성 완료! ({len(suno_state['audio_urls'])}개 버전)")
-
-                            if len(suno_state['audio_urls']) >= 2:
-                                col_v1, col_v2 = st.columns(2)
-
-                                with col_v1:
-                                    track1 = suno_state['audio_urls'][0]
-                                    st.markdown("### 🎵 버전 1")
-                                    if track1.get('image_url'):
-                                        st.image(track1['image_url'], width=200)
-                                    if track1['audio_url']:
-                                        st.audio(track1['audio_url'])
-                                        st.markdown(f"[📥 오디오 다운로드]({track1['audio_url']})")
-
-                                with col_v2:
-                                    track2 = suno_state['audio_urls'][1]
-                                    st.markdown("### 🎵 버전 2")
-                                    if track2.get('image_url'):
-                                        st.image(track2['image_url'], width=200)
-                                    if track2['audio_url']:
-                                        st.audio(track2['audio_url'])
-                                        st.markdown(f"[📥 오디오 다운로드]({track2['audio_url']})")
-
-                            if st.button("🔄 다시 생성하기", key=f"suno_regen_{idx}"):
-                                suno_state['status'] = 'ready'
-                                suno_state['audio_ids'] = []
-                                suno_state['audio_urls'] = []
-                                st.rerun()
-
-                        elif suno_state['status'] == 'error':
-                            st.error("❌ 음악 생성 중 오류 발생")
-                            st.code(suno_state['error_message'])
-                            if st.button("🔄 다시 시도", key=f"suno_retry_{idx}"):
-                                suno_state['status'] = 'ready'
-                                suno_state['error_message'] = ''
-                                st.rerun()
-                    else:
-                        st.info("👈 좌측에서 곡을 선택해주세요.")
-
-# ==================== TAB 2: 이력 보기 (st.code() 적용) ====================
+# ==================== ✅ TAB 2: 이력 보기 (타이틀 제거) ====================
 with tab2:
-    st.header("📚 생성 이력")
+    # ✅ "생성 이력" 타이틀 제거됨
 
     df_history = load_history()
 
@@ -844,62 +899,67 @@ with tab2:
             # 병렬 배치
             hist_left, hist_right = st.columns([3, 7], gap="large")
 
-            # 좌측: 날짜별 트리 목록
+            # ✅ 좌측: 스크롤 가능한 날짜별 트리 목록
             with hist_left:
-                with st.container():
-                    st.subheader("날짜별 곡 목록")
+                st.subheader("날짜별 곡 목록")
 
-                    flat_index = 0
-                    for date, group_df in sorted(date_groups, key=lambda x: x[0], reverse=True):
-                        date_str = date.strftime("%Y-%m-%d")
+                st.markdown('<div class="history-list-scroll">', unsafe_allow_html=True)
 
-                        with st.expander(f"📅 {date_str} ({len(group_df)}곡)", expanded=(flat_index == 0)):
-                            for _, row in group_df.iterrows():
-                                is_selected = (st.session_state.selected_history_index == flat_index)
+                flat_index = 0
+                for date, group_df in sorted(date_groups, key=lambda x: x[0], reverse=True):
+                    date_str = date.strftime("%Y-%m-%d")
 
-                                if st.button(
-                                        row['title'],
-                                        key=f"hist_btn_{flat_index}",
-                                        type="primary" if is_selected else "secondary",
-                                        use_container_width=True
-                                ):
-                                    st.session_state.selected_history_index = flat_index
-                                    st.rerun()
+                    with st.expander(f"📅 {date_str} ({len(group_df)}곡)", expanded=(flat_index == 0)):
+                        for _, row in group_df.iterrows():
+                            is_selected = (st.session_state.selected_history_index == flat_index)
 
-                                flat_index += 1
+                            if st.button(
+                                    row['title'],
+                                    key=f"hist_btn_{flat_index}",
+                                    type="primary" if is_selected else "secondary",
+                                    use_container_width=True
+                            ):
+                                st.session_state.selected_history_index = flat_index
+                                st.rerun()
 
-            # 우측: 상세 정보 + ✅ st.code() 복사 기능
+                            flat_index += 1
+
+                st.markdown('</div>', unsafe_allow_html=True)
+
+            # ✅ 우측: 스크롤 가능한 상세 정보
             with hist_right:
-                with st.container():
-                    if 0 <= st.session_state.selected_history_index < len(flat_list):
-                        selected_row = flat_list[st.session_state.selected_history_index]
+                st.markdown('<div class="detail-scroll">', unsafe_allow_html=True)
 
-                        title = str(selected_row.get('title', 'Untitled'))
-                        theme_content = selected_row.get('theme_ko', selected_row.get('theme', '컨셉 정보 없음'))
-                        raw_lyrics_content = str(selected_row.get('lyrics', ''))
-                        lyrics_content = clean_lyrics_output(raw_lyrics_content)
+                if 0 <= st.session_state.selected_history_index < len(flat_list):
+                    selected_row = flat_list[st.session_state.selected_history_index]
 
-                        st.subheader(title)
-                        st.caption(f"📅 생성일시: {selected_row['timestamp']}")
-                        st.markdown(f'<div class="style-tag">{selected_row["style"]}</div>', unsafe_allow_html=True)
-                        st.markdown(f"**💡 컨셉:** {theme_content}")
+                    title = str(selected_row.get('title', 'Untitled'))
+                    theme_content = selected_row.get('theme_ko', selected_row.get('theme', '컨셉 정보 없음'))
+                    raw_lyrics_content = str(selected_row.get('lyrics', ''))
+                    lyrics_content = clean_lyrics_output(raw_lyrics_content)
 
-                        st.divider()
+                    st.subheader(title)
+                    st.caption(f"📅 생성일시: {selected_row['timestamp']}")
+                    st.markdown(f'<div class="style-tag">{selected_row["style"]}</div>', unsafe_allow_html=True)
+                    st.markdown(f"**💡 컨셉:** {theme_content}")
 
-                        # ✅ st.code() 복사 기능
-                        st.info("💡 각 박스 우측 상단의 복사 아이콘을 클릭하세요!")
+                    st.divider()
 
-                        st.markdown("**📋 제목 (Title)**")
-                        st.code(title, language="text")
+                    # ✅ 안내 박스 제거됨
 
-                        st.markdown("**📝 가사 (Lyrics)**")
-                        st.code(lyrics_content, language="text")
+                    st.markdown("**📋 제목 (Title)**")
+                    st.code(title, language="text")
 
-                        st.markdown("**📋 전체 (제목 + 가사)**")
-                        combined = f"Title: {title}\n\n{lyrics_content}"
-                        st.code(combined, language="text")
-                    else:
-                        st.info("👈 좌측 목록에서 곡을 선택해주세요.")
+                    st.markdown("**📝 가사 (Lyrics)**")
+                    st.code(lyrics_content, language="text")
+
+                    st.markdown("**📋 전체 (제목 + 가사)**")
+                    combined = f"Title: {title}\n\n{lyrics_content}"
+                    st.code(combined, language="text")
+                else:
+                    st.info("👈 좌측 목록에서 곡을 선택해주세요.")
+
+                st.markdown('</div>', unsafe_allow_html=True)
 
 # 푸터
 st.divider()
