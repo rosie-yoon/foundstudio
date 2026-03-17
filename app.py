@@ -1,7 +1,7 @@
-# app.py (금지어 관리 기능 추가)
+# app.py (금지어 입력 단계 추가)
 """
 🎵 AI 작사 스튜디오 Pro - Gemini AI 기반 작사 도구
-- 금지어 설정 기능 추가
+- 사용자가 직접 금지어 입력
 - 다중 API 키 자동 전환
 - 7일 자동 보관
 - 반복 패턴 방지
@@ -22,89 +22,9 @@ from typing import Optional, Tuple, List
 LYRICS_STORAGE_FILE = "lyrics_storage.json"
 HISTORY_CACHE_FILE = "lyrics_history_cache.json"
 API_USAGE_LOG = "api_usage_log.json"
-BANNED_WORDS_FILE = "banned_words.json"
 MAX_HISTORY_DAYS = 7
 MAX_RECENT_PATTERNS = 50
 OPENING_WORDS_THRESHOLD = 3
-
-# 기본 금지어 (설정 초기값)
-DEFAULT_BANNED_WORDS = [
-    "Streetlights",
-    "street lights",
-    "neon signs",
-    "the city hums",
-    "late night settles"
-]
-
-
-# ==================== 금지어 관리 ====================
-class BannedWordsManager:
-    """금지어 관리 및 검증"""
-
-    def __init__(self, filename=BANNED_WORDS_FILE):
-        self.filename = filename
-        self.banned_words = self._load_banned_words()
-
-    def _load_banned_words(self):
-        """저장된 금지어 로드"""
-        if os.path.exists(self.filename):
-            try:
-                with open(self.filename, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    return data.get("words", DEFAULT_BANNED_WORDS)
-            except:
-                return DEFAULT_BANNED_WORDS
-        return DEFAULT_BANNED_WORDS
-
-    def _save_banned_words(self):
-        """금지어 저장"""
-        try:
-            data = {"words": self.banned_words, "updated_at": datetime.now().isoformat()}
-            with open(self.filename, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            st.error(f"금지어 저장 실패: {e}")
-            return False
-
-    def add_word(self, word: str):
-        """금지어 추가"""
-        word = word.strip().lower()
-        if word and word not in self.banned_words:
-            self.banned_words.append(word)
-            self._save_banned_words()
-            return True
-        return False
-
-    def remove_word(self, word: str):
-        """금지어 삭제"""
-        word = word.strip().lower()
-        if word in self.banned_words:
-            self.banned_words.remove(word)
-            self._save_banned_words()
-            return True
-        return False
-
-    def reset_to_default(self):
-        """기본값으로 리셋"""
-        self.banned_words = DEFAULT_BANNED_WORDS.copy()
-        self._save_banned_words()
-        return True
-
-    def check_lyrics(self, lyrics: str) -> Tuple[bool, List[str]]:
-        """가사에서 금지어 검사"""
-        lyrics_lower = lyrics.lower()
-        found_words = []
-
-        for banned_word in self.banned_words:
-            if banned_word.lower() in lyrics_lower:
-                found_words.append(banned_word)
-
-        return len(found_words) > 0, found_words
-
-    def get_all_words(self):
-        """모든 금지어 반환"""
-        return sorted(self.banned_words)
 
 
 # ==================== 다중 API 키 관리자 ====================
@@ -286,6 +206,21 @@ def extract_opening_words(lyrics):
 def calculate_text_hash(text):
     """텍스트의 해시값 계산"""
     return hashlib.md5(text.encode()).hexdigest()[:8]
+
+
+def check_banned_words(lyrics: str, banned_words: List[str]) -> Tuple[bool, List[str]]:
+    """가사에서 금지어 검사"""
+    if not banned_words:
+        return False, []
+
+    lyrics_lower = lyrics.lower()
+    found_words = []
+
+    for banned_word in banned_words:
+        if banned_word.lower() in lyrics_lower:
+            found_words.append(banned_word)
+
+    return len(found_words) > 0, found_words
 
 
 # ==================== 저장소 관리 ====================
@@ -525,6 +460,8 @@ def init_session_state():
         st.session_state.selected_style = None
     if 'num_songs' not in st.session_state:
         st.session_state.num_songs = 3
+    if 'banned_words' not in st.session_state:
+        st.session_state.banned_words = []
     if 'setlist' not in st.session_state:
         st.session_state.setlist = []
     if 'generated_lyrics' not in st.session_state:
@@ -603,7 +540,6 @@ OUTPUT FORMAT: Pure lyrics only"""
 
 # ==================== 초기화 ====================
 api_manager = MultiAPIKeyManager()
-banned_words_manager = BannedWordsManager()
 
 if not api_manager.api_keys:
     st.error("❌ API 키가 설정되지 않았습니다.")
@@ -617,108 +553,7 @@ st.title("🎵 AI 작사 스튜디오 Pro")
 st.markdown("**Gemini AI 기반 프로페셔널 Urban R&B 작사 도구**")
 
 # ==================== 탭 구성 ====================
-tab1, tab2, tab3 = st.tabs(["✍️ 작사하기", "📚 이력 보기", "⚙️ 설정"])
-
-# ==================== TAB 3: 설정 ====================
-with tab3:
-    st.header("⚙️ 금지어 관리")
-    st.info("가사 생성 시 피할 단어들을 설정합니다. 이 단어들이 포함된 가사는 경고됩니다.")
-
-    st.subheader("📋 현재 금지어 목록")
-
-    # 현재 금지어 표시
-    all_banned = banned_words_manager.get_all_words()
-    if all_banned:
-        st.markdown("**현재 설정된 금지어:**")
-        st.markdown(" ".join([f'<span class="banned-word-tag">{word}</span>' for word in all_banned]),
-                    unsafe_allow_html=True)
-    else:
-        st.info("설정된 금지어가 없습니다.")
-
-    st.divider()
-
-    st.subheader("➕ 금지어 추가")
-    col1, col2 = st.columns([3, 1])
-
-    with col1:
-        new_word = st.text_input(
-            "새로운 금지어 입력",
-            placeholder="예: Streetlights, neon signs...",
-            label_visibility="collapsed"
-        )
-
-    with col2:
-        if st.button("추가", type="primary", use_container_width=True):
-            if new_word.strip():
-                if banned_words_manager.add_word(new_word):
-                    st.success(f"✅ '{new_word}' 추가됨")
-                    st.rerun()
-                else:
-                    st.warning(f"⚠️ '{new_word}'은 이미 목록에 있습니다.")
-            else:
-                st.error("❌ 금지어를 입력해주세요.")
-
-    st.divider()
-
-    st.subheader("🗑️ 금지어 삭제")
-
-    if all_banned:
-        selected_to_delete = st.multiselect(
-            "삭제할 금지어 선택",
-            options=all_banned,
-            label_visibility="collapsed"
-        )
-
-        if selected_to_delete:
-            col1, col2 = st.columns(2)
-
-            with col1:
-                if st.button(f"선택된 {len(selected_to_delete)}개 삭제", type="secondary", use_container_width=True):
-                    for word in selected_to_delete:
-                        banned_words_manager.remove_word(word)
-                    st.success(f"✅ {len(selected_to_delete)}개 삭제됨")
-                    st.rerun()
-
-            with col2:
-                st.markdown("")  # 공간
-
-    st.divider()
-
-    st.subheader("🔄 기본값으로 리셋")
-
-    col1, col2 = st.columns([2, 2])
-
-    with col1:
-        st.info(f"""
-        **기본 금지어:**
-        {chr(10).join([f'• {word}' for word in DEFAULT_BANNED_WORDS])}
-        """)
-
-    with col2:
-        if st.button("기본값으로 리셋", type="secondary", use_container_width=True):
-            banned_words_manager.reset_to_default()
-            st.success("✅ 기본값으로 리셋되었습니다.")
-            st.rerun()
-
-    st.divider()
-
-    st.header("🔑 API 키 상태")
-    st.info("등록된 API 키의 상태를 확인할 수 있습니다.")
-
-    api_status = api_manager.get_status()
-    for status in api_status:
-        col1, col2 = st.columns([3, 1])
-
-        with col1:
-            if status["is_exhausted"]:
-                st.error(f"❌ {status['name']} - 소진됨")
-            elif status["is_current"]:
-                st.success(f"✅ {status['name']} - 사용중")
-            else:
-                st.info(f"⏳ {status['name']} - 대기중")
-
-        with col2:
-            st.markdown("")
+tab1, tab2 = st.tabs(["✍️ 작사하기", "📚 이력 보기"])
 
 # ==================== TAB 1: 작사하기 ====================
 with tab1:
@@ -728,9 +563,10 @@ with tab1:
             "1️⃣ 장르 선택",
             "2️⃣ 스타일 선택",
             "3️⃣ 곡 수 설정",
-            "4️⃣ 셋리스트 생성",
-            "5️⃣ 가사 생성",
-            "6️⃣ 결과 확인"
+            "4️⃣ 금지어 설정",
+            "5️⃣ 셋리스트 생성",
+            "6️⃣ 가사 생성",
+            "7️⃣ 결과 확인"
         ]
 
         for i, step in enumerate(steps, 1):
@@ -761,17 +597,8 @@ with tab1:
                 st.info(f"⏳ {status['name']} (대기)")
 
         st.divider()
-        st.header("🚫 금지어")
-        banned_count = len(banned_words_manager.get_all_words())
-        st.metric("설정된 금지어", f"{banned_count}개")
-
-        if st.button("🔧 금지어 설정", key="banned_nav"):
-            st.session_state.current_step = 0
-            st.switch_page("pages/⚙️_settings.py") if os.path.exists("pages") else None
-
-        st.divider()
         if st.button("🔄 처음부터 다시 시작", type="secondary"):
-            for key in ['current_step', 'selected_genre', 'selected_style', 'setlist', 'generated_lyrics']:
+            for key in ['current_step', 'selected_genre', 'selected_style', 'num_songs', 'banned_words', 'setlist', 'generated_lyrics']:
                 if key in st.session_state:
                     del st.session_state[key]
             init_session_state()
@@ -844,24 +671,69 @@ with tab1:
                 st.rerun()
 
         with col2:
-            if st.button("➡️ 셋리스트 만들기", type="primary"):
+            if st.button("➡️ 금지어 설정하기", type="primary"):
                 st.session_state.num_songs = num_songs
                 st.session_state.current_step = 4
                 st.rerun()
 
-    # STEP 4: 셋리스트 생성
+    # STEP 4: 금지어 설정 (새로 추가!)
     elif st.session_state.current_step == 4:
-        st.header("4️⃣ 셋리스트(곡 컨셉) 생성")
+        st.header("4️⃣ 금지어를 설정하세요 (선택사항)")
+
+        st.info("가사에 포함되지 않기를 원하는 단어들을 입력하세요. 쉼표로 구분합니다.")
+        st.markdown(f"**선택됨:** {st.session_state.selected_genre} - {st.session_state.selected_style}")
+        st.markdown(f"**곡 수:** {st.session_state.num_songs}곡")
+
+        # 금지어 입력
+        banned_input = st.text_area(
+            "금지어 입력 (쉼표로 구분)",
+            placeholder="예: Streetlights, neon signs, the city hums, late night settles",
+            height=100,
+            label_visibility="collapsed"
+        )
+
+        st.divider()
+
+        # 입력한 금지어 파싱 및 표시
+        if banned_input.strip():
+            banned_list = [word.strip() for word in banned_input.split(',') if word.strip()]
+            st.session_state.banned_words = banned_list
+
+            st.markdown("**설정된 금지어:**")
+            st.markdown(" ".join([f'<span class="banned-word-tag">{word}</span>' for word in banned_list]),
+                        unsafe_allow_html=True)
+        else:
+            st.session_state.banned_words = []
+            st.info("⏭️ 금지어를 설정하지 않으셨습니다.")
+
+        st.divider()
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            if st.button("⬅️ 곡 수 다시 설정"):
+                st.session_state.current_step = 3
+                st.rerun()
+
+        with col2:
+            if st.button("➡️ 다음으로", type="primary", use_container_width=True):
+                st.session_state.current_step = 5
+                st.rerun()
+
+        with col3:
+            st.markdown("")
+
+    # STEP 5: 셋리스트 생성
+    elif st.session_state.current_step == 5:
+        st.header("5️⃣ 셋리스트(곡 컨셉) 생성")
 
         st.info(f"{st.session_state.selected_style} 스타일로 {st.session_state.num_songs}곡의 컨셉을 만듭니다.")
 
         # 금지어 안내
-        banned_list = banned_words_manager.get_all_words()
-        if banned_list:
+        if st.session_state.banned_words:
             st.markdown(f"""
             <div class="warning-box">
-            <strong>🚫 금지어 설정됨:</strong> {', '.join(banned_list[:5])}
-            {f'... 외 {len(banned_list) - 5}개' if len(banned_list) > 5 else ''}
+            <strong>🚫 금지어 설정됨:</strong> {', '.join(st.session_state.banned_words)}
             </div>
             """, unsafe_allow_html=True)
 
@@ -936,30 +808,36 @@ Output as JSON:
             with col2:
                 if st.button("✅ 이대로 가사 생성하기", type="primary"):
                     st.session_state.setlist = edited_setlist
-                    st.session_state.current_step = 5
+                    st.session_state.current_step = 6
                     st.rerun()
 
-    # STEP 5: 가사 생성
-    elif st.session_state.current_step == 5:
-        st.header("5️⃣ 가사 생성 중...")
+    # STEP 6: 가사 생성
+    elif st.session_state.current_step == 6:
+        st.header("6️⃣ 가사 생성 중...")
 
         st.markdown(f"**총 {len(st.session_state.setlist)}곡 생성을 시작합니다.**")
         st.markdown(f"**스타일:** {st.session_state.selected_genre} - {st.session_state.selected_style}")
+
+        if st.session_state.banned_words:
+            st.markdown(f"""
+            <div class="warning-box">
+            <strong>🚫 금지어:</strong> {', '.join(st.session_state.banned_words)}
+            </div>
+            """, unsafe_allow_html=True)
 
         progress_bar = st.progress(0)
         status_text = st.empty()
         generated_songs = []
 
         style_info = GENRE_PROMPTS[st.session_state.selected_genre]['styles'][st.session_state.selected_style]
-        banned_list = banned_words_manager.get_all_words()
 
         for idx, song in enumerate(st.session_state.setlist):
             status_text.text(f"작사 중: {song['title']} ({idx + 1}/{len(st.session_state.setlist)})")
 
             # 금지어 포함 프롬프트
             banned_instruction = ""
-            if banned_list:
-                banned_str = ", ".join(banned_list)
+            if st.session_state.banned_words:
+                banned_str = ", ".join(st.session_state.banned_words)
                 banned_instruction = f"\n\nCRITICAL: NEVER use these words or phrases in the lyrics: {banned_str}\nMake absolutely sure these banned words do NOT appear in the output."
 
             lyrics_prompt = f"""
@@ -990,7 +868,7 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
                 clean_lyrics = clean_lyrics_output(raw_lyrics)
 
                 # 🔥 금지어 체크
-                has_banned, found_words = banned_words_manager.check_lyrics(clean_lyrics)
+                has_banned, found_words = check_banned_words(clean_lyrics, st.session_state.banned_words)
 
                 if has_banned:
                     st.warning(f"""
@@ -1006,7 +884,6 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
                     st.warning(f"""
                     ⚠️ **반복 패턴 감지** - {song['title']}
                     감지된 반복: {preview}
-                    다시 생성을 권장합니다.
                     """)
                 else:
                     detector.add_pattern(clean_lyrics)
@@ -1056,13 +933,13 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
             st.warning(f"⚠️ 저장 중 오류: {e}")
 
         status_text.text("✅ 모든 작사가 완료되었습니다!")
-        st.session_state.current_step = 6
+        st.session_state.current_step = 7
         time.sleep(1)
         st.rerun()
 
-    # STEP 6: 결과 표시
-    elif st.session_state.current_step == 6:
-        st.header("6️⃣ 생성 완료! (자동 저장됨)")
+    # STEP 7: 결과 표시
+    elif st.session_state.current_step == 7:
+        st.header("7️⃣ 생성 완료! (자동 저장됨)")
 
         if not st.session_state.generated_lyrics:
             st.error("생성된 가사가 없습니다.")
@@ -1086,7 +963,7 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
 
             with col2:
                 if st.button("🔄 추가 생성하기"):
-                    st.session_state.current_step = 4
+                    st.session_state.current_step = 5
                     st.session_state.setlist = []
                     st.rerun()
 
@@ -1227,6 +1104,6 @@ st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
     🎵 AI 작사 스튜디오 Pro | Gemini AI 기반 전문 작사 도구
     <br>
-    <small>금지어 설정 | 생성된 가사는 7일간 자동 보관 | 반복 패턴 자동 감지 | 다중 API 키 지원</small>
+    <small>금지어 직접 입력 | 생성된 가사는 7일간 자동 보관 | 반복 패턴 자동 감지 | 다중 API 키 지원</small>
 </div>
 """, unsafe_allow_html=True)
