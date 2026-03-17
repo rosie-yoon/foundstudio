@@ -1,10 +1,12 @@
-# app.py (완전한 스타일 관리 시스템)
+# app.py (완전한 클린 코드)
 """
 🎵 AI 작사 스튜디오 Pro - Gemini AI 기반 작사 도구
 - 사용자가 직접 금지어 입력 (제목 + 가사 적용)
+- 제목 생성 단계에서 금지어 자동 수정
 - 스타일 추가/수정/삭제 관리
 - 다중 API 키 자동 전환
 - 7일 자동 보관
+- 개선된 좌우 분할 UI
 """
 
 import streamlit as st
@@ -16,7 +18,6 @@ from datetime import datetime, timedelta
 import pandas as pd
 import google.generativeai as genai
 from typing import Optional, Tuple, List
-
 
 # ==================== 상수 정의 ====================
 LYRICS_STORAGE_FILE = "lyrics_storage.json"
@@ -391,6 +392,39 @@ def check_banned_words(text: str, banned_words: List[str]) -> Tuple[bool, List[s
     return len(found_words) > 0, found_words
 
 
+def regenerate_title(original_title: str, banned_words: List[str], api_manager: 'MultiAPIKeyManager') -> str:
+    """금지어가 포함된 제목 재생성"""
+    api_key = api_manager.get_current_key()
+
+    if not api_key:
+        return original_title
+
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('models/gemini-2.5-flash')
+
+        banned_str = ", ".join(banned_words)
+
+        regenerate_prompt = f"""You are a songwriter. The following title contains banned words that must not be used: {banned_str}
+
+Original title: {original_title}
+
+Generate a completely new, different English song title that:
+1. Does NOT contain any of these banned words: {banned_str}
+2. Is catchy and memorable
+3. Fits the Urban R&B genre
+4. Is a single line only
+
+Output ONLY the new title, nothing else."""
+
+        response = model.generate_content(regenerate_prompt)
+        new_title = response.text.strip()
+        return new_title
+
+    except Exception as e:
+        return original_title
+
+
 # ==================== 저장소 관리 ====================
 class LyricsStorage:
     """7일 보관 가사 저장소"""
@@ -590,6 +624,8 @@ st.markdown("""
         line-height: 1.6;
         white-space: pre-wrap;
         word-wrap: break-word;
+        max-height: 600px;
+        overflow-y: auto;
     }
     .song-history-card {
         background: #1a1a1a;
@@ -641,6 +677,8 @@ def init_session_state():
         st.session_state.setlist = []
     if 'generated_lyrics' not in st.session_state:
         st.session_state.generated_lyrics = []
+    if 'selected_song_idx' not in st.session_state:
+        st.session_state.selected_song_idx = 0
 
 
 init_session_state()
@@ -693,18 +731,11 @@ with tab3:
     with style_tab2:
         st.subheader("➕ 새로운 스타일 추가")
 
-        col1, col2 = st.columns(2)
-
-        with col1:
-            # 기존 장르에 추가하는지, 새 장르를 만드는지 선택
-            add_option = st.radio(
-                "추가 방식 선택",
-                ["기존 장르에 추가", "새 장르 생성"],
-                key="add_option"
-            )
-
-        with col2:
-            st.markdown("")
+        add_option = st.radio(
+            "추가 방식 선택",
+            ["기존 장르에 추가", "새 장르 생성"],
+            key="add_option"
+        )
 
         if add_option == "기존 장르에 추가":
             genres = style_manager.get_genres()
@@ -815,18 +846,12 @@ with tab3:
                     height=300
                 )
 
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    if st.button("✅ 수정 저장", type="primary"):
-                        if style_manager.update_style(selected_genre, selected_style, new_description, new_prompt):
-                            st.success(f"✅ '{selected_style}' 스타일이 수정되었습니다!")
-                            st.rerun()
-                        else:
-                            st.error("❌ 수정 실패")
-
-                with col2:
-                    st.markdown("")
+                if st.button("✅ 수정 저장", type="primary"):
+                    if style_manager.update_style(selected_genre, selected_style, new_description, new_prompt):
+                        st.success(f"✅ '{selected_style}' 스타일이 수정되었습니다!")
+                        st.rerun()
+                    else:
+                        st.error("❌ 수정 실패")
 
             with edit_tab2:
                 st.warning(f"⚠️ '{selected_style}' 스타일을 삭제하시겠습니까?")
@@ -870,7 +895,6 @@ with tab3:
                         st.error("❌ 가져오기 실패")
             except Exception as e:
                 st.error(f"❌ 파일 읽기 실패: {e}")
-
 
 # ==================== TAB 4: 고급 설정 ====================
 with tab4:
@@ -920,7 +944,6 @@ with tab4:
             st.success("✅ 반복 패턴이 초기화되었습니다!")
             st.rerun()
 
-
 # ==================== TAB 1: 작사하기 ====================
 with tab1:
     with st.sidebar:
@@ -964,7 +987,8 @@ with tab1:
 
         st.divider()
         if st.button("🔄 처음부터 다시 시작", type="secondary"):
-            for key in ['current_step', 'selected_genre', 'selected_style', 'num_songs', 'banned_words', 'setlist', 'generated_lyrics']:
+            for key in ['current_step', 'selected_genre', 'selected_style', 'num_songs', 'banned_words', 'setlist',
+                        'generated_lyrics', 'selected_song_idx']:
                 if key in st.session_state:
                     del st.session_state[key]
             init_session_state()
@@ -1139,7 +1163,49 @@ Output as JSON:
                         text = text[3:-3]
 
                     data = json.loads(text)
-                    st.session_state.setlist = data['songs']
+                    setlist = data['songs']
+
+                    # 🔥 제목에서 금지어 검사 및 자동 수정
+                    if st.session_state.banned_words:
+                        modified_setlist = []
+                        progress_container = st.container()
+
+                        with progress_container:
+                            title_progress = st.progress(0)
+                            title_status = st.empty()
+
+                            for idx, song in enumerate(setlist):
+                                title_status.text(f"제목 검증 중: {song['title']} ({idx + 1}/{len(setlist)})")
+
+                                # 금지어 체크
+                                has_banned, found = check_banned_words(song['title'], st.session_state.banned_words)
+
+                                if has_banned:
+                                    st.warning(f"""
+                                    ⚠️ **제목 수정** - '{song['title']}'
+                                    포함된 금지어: {', '.join(found)}
+                                    새로운 제목 생성 중...
+                                    """)
+
+                                    # 제목 재생성
+                                    new_title = regenerate_title(song['title'], st.session_state.banned_words,
+                                                                 api_manager)
+                                    st.success(f"✅ 변경됨: '{new_title}'")
+
+                                    modified_setlist.append({
+                                        "title": new_title,
+                                        "theme": song['theme']
+                                    })
+                                else:
+                                    modified_setlist.append(song)
+
+                                title_progress.progress((idx + 1) / len(setlist))
+                                time.sleep(0.5)
+
+                        st.session_state.setlist = modified_setlist
+                    else:
+                        st.session_state.setlist = setlist
+
                     st.success("✅ 컨셉 생성 완료!")
 
                 except Exception as e:
@@ -1199,7 +1265,7 @@ Output as JSON:
             banned_instruction = ""
             if st.session_state.banned_words:
                 banned_str = ", ".join(st.session_state.banned_words)
-                banned_instruction = f"\n\nCRITICAL: NEVER use these words or phrases in the title or lyrics: {banned_str}\nMake absolutely sure these banned words do NOT appear in the output."
+                banned_instruction = f"\n\nCRITICAL: NEVER use these words or phrases in the lyrics: {banned_str}\nMake absolutely sure these banned words do NOT appear in the output."
 
             lyrics_prompt = f"""
 {style_prompt}{banned_instruction}
@@ -1227,15 +1293,6 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
                 response = model.generate_content(lyrics_prompt)
                 raw_lyrics = response.text.strip()
                 clean_lyrics = clean_lyrics_output(raw_lyrics)
-
-                # 🔥 제목에서도 금지어 체크
-                title_has_banned, title_found = check_banned_words(song['title'], st.session_state.banned_words)
-
-                if title_has_banned:
-                    st.warning(f"""
-                    ⚠️ **제목에서 금지어 감지** - {song['title']}
-                    감지된 금지어: {', '.join(title_found)}
-                    """)
 
                 # 가사에서 금지어 체크
                 has_banned, found_words = check_banned_words(clean_lyrics, st.session_state.banned_words)
@@ -1306,7 +1363,7 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
         time.sleep(1)
         st.rerun()
 
-    # STEP 7: 결과 표시
+    # STEP 7: 결과 표시 (개선된 좌우 분할 UI)
     elif st.session_state.current_step == 7:
         st.header("7️⃣ 생성 완료! (자동 저장됨)")
 
@@ -1315,6 +1372,7 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
         else:
             st.success(f"🎉 총 {len(st.session_state.generated_lyrics)}곡의 가사가 완성되어 7일간 저장되었습니다!")
 
+            # 다운로드 버튼
             col1, col2 = st.columns(2)
 
             with col1:
@@ -1337,27 +1395,65 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
                     st.rerun()
 
             st.divider()
-            st.info("💡 각 곡을 클릭하여 펼치고 가사를 확인하세요.")
 
-            for idx, song in enumerate(st.session_state.generated_lyrics, 1):
-                with st.expander(f"🎵 {idx}. {song['title']}", expanded=(idx == 1)):
-                    col1, col2 = st.columns([2, 1])
+            # 🔥 좌우 분할 레이아웃
+            left_col, right_col = st.columns([2, 5], gap="medium")
 
-                    with col1:
-                        st.markdown(f"**컨셉:** {song.get('theme', '')}")
+            # 좌측: 곡 목록
+            with left_col:
+                st.subheader("📋 곡 목록")
 
-                    with col2:
-                        if st.button(f"📋 복사", key=f"copy_{idx}", use_container_width=True):
-                            st.code(song['lyrics'], language="text")
+                for idx, song in enumerate(st.session_state.generated_lyrics):
+                    button_label = f"🎵 {idx + 1}. {song['title'][:20]}{'...' if len(song['title']) > 20 else ''}"
+
+                    if idx == st.session_state.selected_song_idx:
+                        if st.button(
+                                button_label,
+                                key=f"song_select_{idx}",
+                                use_container_width=True,
+                                type="primary"
+                        ):
+                            st.session_state.selected_song_idx = idx
+                            st.rerun()
+                    else:
+                        if st.button(
+                                button_label,
+                                key=f"song_select_{idx}",
+                                use_container_width=True
+                        ):
+                            st.session_state.selected_song_idx = idx
+                            st.rerun()
+
+            # 우측: 선택된 곡의 상세 정보
+            with right_col:
+                if 0 <= st.session_state.selected_song_idx < len(st.session_state.generated_lyrics):
+                    selected_song = st.session_state.generated_lyrics[st.session_state.selected_song_idx]
+
+                    # 곡 제목
+                    st.subheader(f"🎵 {selected_song['title']}")
+
+                    # 복사 버튼
+                    col_title, col_lyrics = st.columns(2)
+
+                    with col_title:
+                        if st.button("📋 제목 복사", use_container_width=True,
+                                     key=f"copy_title_{st.session_state.selected_song_idx}"):
+                            st.code(selected_song['title'], language="text")
+
+                    with col_lyrics:
+                        if st.button("📋 가사 복사", use_container_width=True,
+                                     key=f"copy_lyrics_{st.session_state.selected_song_idx}"):
+                            st.code(selected_song['lyrics'], language="text")
 
                     st.divider()
-                    st.markdown("### 📝 가사")
+
+                    # 가사
+                    st.markdown(f"**📝 가사:**")
                     st.markdown(f"""
                     <div class="lyrics-container">
-                    {song['lyrics'].replace(chr(10), '<br>')}
+                    {selected_song['lyrics'].replace(chr(10), '<br>')}
                     </div>
                     """, unsafe_allow_html=True)
-
 
 # ==================== TAB 2: 이력 보기 ====================
 with tab2:
@@ -1447,22 +1543,62 @@ with tab2:
 
                 st.divider()
 
-                for idx, song in enumerate(session["songs"], 1):
-                    with st.expander(f"🎵 {idx}. {song['title']}"):
-                        col1, col2 = st.columns([2, 1])
+                # 🔥 이력도 좌우 분할 레이아웃 적용
+                history_left, history_right = st.columns([2, 5], gap="medium")
 
-                        with col1:
-                            st.markdown(f"**컨셉:** {song.get('theme', '')}")
+                with history_left:
+                    st.subheader("📋 곡 목록")
 
-                        with col2:
-                            if st.button(f"📋 복사", key=f"copy_history_{session['session_id']}_{idx}", use_container_width=True):
-                                st.code(song['lyrics'], language="text")
+                    history_key = f"history_session_{session['session_id']}"
+                    if history_key not in st.session_state:
+                        st.session_state[history_key] = 0
+
+                    for idx, song in enumerate(session["songs"]):
+                        button_label = f"🎵 {idx + 1}. {song['title'][:20]}{'...' if len(song['title']) > 20 else ''}"
+
+                        if idx == st.session_state[history_key]:
+                            if st.button(
+                                    button_label,
+                                    key=f"history_song_select_{session['session_id']}_{idx}",
+                                    use_container_width=True,
+                                    type="primary"
+                            ):
+                                st.session_state[history_key] = idx
+                                st.rerun()
+                        else:
+                            if st.button(
+                                    button_label,
+                                    key=f"history_song_select_{session['session_id']}_{idx}",
+                                    use_container_width=True
+                            ):
+                                st.session_state[history_key] = idx
+                                st.rerun()
+
+                with history_right:
+                    history_key = f"history_session_{session['session_id']}"
+                    if 0 <= st.session_state.get(history_key, 0) < len(session["songs"]):
+                        selected_song = session["songs"][st.session_state[history_key]]
+
+                        st.subheader(f"🎵 {selected_song['title']}")
+
+                        col_title, col_lyrics = st.columns(2)
+
+                        with col_title:
+                            if st.button("📋 제목 복사", use_container_width=True,
+                                         key=f"history_copy_title_{session['session_id']}_{st.session_state[history_key]}"):
+                                st.code(selected_song['title'], language="text")
+
+                        with col_lyrics:
+                            if st.button("📋 가사 복사", use_container_width=True,
+                                         key=f"history_copy_lyrics_{session['session_id']}_{st.session_state[history_key]}"):
+                                st.code(selected_song['lyrics'], language="text")
 
                         st.divider()
-                        st.markdown("### 📝 가사")
+
+                        st.markdown(f"**📝 가사:**")
                         st.markdown(f"""
                         <div class="lyrics-container">
-                        {song['lyrics'].replace(chr(10), '<br>')}
+                        {selected_song['lyrics'].replace(chr(10), '<br>')}
                         </div>
                         """, unsafe_allow_html=True)
 
@@ -1474,6 +1610,6 @@ st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
     🎵 AI 작사 스튜디오 Pro | Gemini AI 기반 전문 작사 도구
     <br>
-    <small>금지어 직접 입력 (제목+가사) | 스타일 관리 | 생성된 가사는 7일간 자동 보관 | 반복 패턴 자동 감지 | 다중 API 키 지원</small>
+    <small>금지어 직접 입력 (제목+가사) | 제목 자동 수정 | 스타일 관리 | 생성된 가사는 7일간 자동 보관 | 반복 패턴 자동 감지 | 다중 API 키 지원</small>
 </div>
 """, unsafe_allow_html=True)
