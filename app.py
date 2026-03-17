@@ -1,10 +1,10 @@
-# app.py (금지어 입력 단계 추가)
+# app.py (완전한 스타일 관리 시스템)
 """
 🎵 AI 작사 스튜디오 Pro - Gemini AI 기반 작사 도구
-- 사용자가 직접 금지어 입력
+- 사용자가 직접 금지어 입력 (제목 + 가사 적용)
+- 스타일 추가/수정/삭제 관리
 - 다중 API 키 자동 전환
 - 7일 자동 보관
-- 반복 패턴 방지
 """
 
 import streamlit as st
@@ -22,9 +22,176 @@ from typing import Optional, Tuple, List
 LYRICS_STORAGE_FILE = "lyrics_storage.json"
 HISTORY_CACHE_FILE = "lyrics_history_cache.json"
 API_USAGE_LOG = "api_usage_log.json"
+STYLES_CONFIG_FILE = "styles_config.json"
 MAX_HISTORY_DAYS = 7
 MAX_RECENT_PATTERNS = 50
 OPENING_WORDS_THRESHOLD = 3
+
+
+# ==================== 스타일 관리 ====================
+class StyleManager:
+    """사용자 정의 스타일 관리"""
+
+    def __init__(self, filename=STYLES_CONFIG_FILE):
+        self.filename = filename
+        self.styles = self._load_styles()
+
+    def _load_styles(self):
+        """저장된 스타일 로드"""
+        if os.path.exists(self.filename):
+            try:
+                with open(self.filename, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                return self._get_default_styles()
+        return self._get_default_styles()
+
+    def _get_default_styles(self):
+        """기본 스타일"""
+        return {
+            "Urban R&B": {
+                "description": "JAEHYUN 'J' 앨범 스타일의 모던 R&B",
+                "styles": {
+                    "Smoke Style": {
+                        "description": "도시적이고 로맨틱한 R&B - 늦은 밤, 자신감, 그루비함",
+                        "system_prompt": """You are a professional R&B songwriter helping create songs for a music project using Suno AI.
+
+CRITICAL REQUIREMENTS:
+1. Song titles MUST be in natural and fluent English only
+2. All lyrics MUST be in natural and fluent English only
+3. DO NOT include metadata, titles, or descriptions in lyrics output
+4. CREATE UNIQUE opening lines that are FRESH and ORIGINAL
+5. Each song must have completely different first verse content
+
+STYLE: "Smoke Style" - Urban Romantic R&B
+Mood: Late night, City atmosphere, Confident but soft romance, Flirting energy, Smooth groove
+Themes: late night drives, city lights, playful romance, magnetic attraction, confident intimacy
+Tone: smooth, cool, groovy, stylish, urban
+
+SONG STRUCTURE (MANDATORY):
+[Verse 1] -> [Pre-Chorus] -> [Chorus] -> [Verse 2] -> [Pre-Chorus] -> [Chorus] -> [Bridge] -> [Final Chorus]
+
+WRITING STYLE: Natural, conversational, emotionally believable, simple but memorable
+
+CRITICAL OUTPUT REQUIREMENTS:
+- START directly with [Verse 1]
+- Output ONLY lyrics with section tags
+- NO metadata, titles, or descriptions
+- Each verse should have unique, fresh content
+
+OUTPUT FORMAT: Pure lyrics only"""
+                    },
+
+                    "Dandelion Style": {
+                        "description": "따뜻하고 감성적인 R&B - 고백, 포근함, 순수한 사랑",
+                        "system_prompt": """You are a professional R&B songwriter helping create songs for a music project using Suno AI.
+
+CRITICAL REQUIREMENTS:
+1. Song titles MUST be in natural and fluent English only
+2. All lyrics MUST be in natural and fluent English only
+3. DO NOT include metadata, titles, or descriptions in lyrics output
+4. CREATE UNIQUE opening lines that are FRESH and ORIGINAL
+5. Each song must have completely different first verse content
+
+STYLE: "Dandelion Style" - Warm Romantic R&B
+Mood: Soft love, Confession, Warm emotional connection, Pure romance, Gentle affection
+Themes: first love, deep emotional connection, comfort in love, slow relationship growth, quiet moments together
+Tone: warm, sincere, romantic, gentle, emotional
+
+SONG STRUCTURE (MANDATORY):
+[Verse 1] -> [Pre-Chorus] -> [Chorus] -> [Verse 2] -> [Pre-Chorus] -> [Chorus] -> [Bridge] -> [Final Chorus]
+
+WRITING STYLE: Natural, conversational, emotionally believable, simple but memorable
+
+CRITICAL OUTPUT REQUIREMENTS:
+- START directly with [Verse 1]
+- Output ONLY lyrics with section tags
+- NO metadata, titles, or descriptions
+- Each verse should have unique, fresh content
+
+OUTPUT FORMAT: Pure lyrics only"""
+                    }
+                }
+            }
+        }
+
+    def _save_styles(self):
+        """스타일 저장"""
+        try:
+            with open(self.filename, 'w', encoding='utf-8') as f:
+                json.dump(self.styles, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            st.error(f"스타일 저장 실패: {e}")
+            return False
+
+    def get_genres(self):
+        """모든 장르 반환"""
+        return list(self.styles.keys())
+
+    def get_genre_styles(self, genre):
+        """특정 장르의 스타일 반환"""
+        if genre in self.styles:
+            return self.styles[genre].get("styles", {})
+        return {}
+
+    def get_style_prompt(self, genre, style):
+        """스타일의 프롬프트 반환"""
+        if genre in self.styles and style in self.styles[genre].get("styles", {}):
+            return self.styles[genre]["styles"][style].get("system_prompt", "")
+        return ""
+
+    def add_genre(self, genre_name, description):
+        """새로운 장르 추가"""
+        if genre_name not in self.styles:
+            self.styles[genre_name] = {
+                "description": description,
+                "styles": {}
+            }
+            return self._save_styles()
+        return False
+
+    def add_style(self, genre, style_name, style_description, system_prompt):
+        """새로운 스타일 추가"""
+        if genre in self.styles:
+            if style_name not in self.styles[genre]["styles"]:
+                self.styles[genre]["styles"][style_name] = {
+                    "description": style_description,
+                    "system_prompt": system_prompt
+                }
+                return self._save_styles()
+        return False
+
+    def update_style(self, genre, style_name, style_description, system_prompt):
+        """스타일 수정"""
+        if genre in self.styles and style_name in self.styles[genre]["styles"]:
+            self.styles[genre]["styles"][style_name] = {
+                "description": style_description,
+                "system_prompt": system_prompt
+            }
+            return self._save_styles()
+        return False
+
+    def delete_style(self, genre, style_name):
+        """스타일 삭제"""
+        if genre in self.styles and style_name in self.styles[genre]["styles"]:
+            del self.styles[genre]["styles"][style_name]
+            return self._save_styles()
+        return False
+
+    def export_styles(self):
+        """스타일을 JSON으로 내보내기"""
+        return json.dumps(self.styles, ensure_ascii=False, indent=2)
+
+    def import_styles(self, json_str):
+        """JSON에서 스타일 가져오기"""
+        try:
+            new_styles = json.loads(json_str)
+            self.styles = new_styles
+            return self._save_styles()
+        except Exception as e:
+            st.error(f"스타일 가져오기 실패: {e}")
+            return False
 
 
 # ==================== 다중 API 키 관리자 ====================
@@ -208,17 +375,18 @@ def calculate_text_hash(text):
     return hashlib.md5(text.encode()).hexdigest()[:8]
 
 
-def check_banned_words(lyrics: str, banned_words: List[str]) -> Tuple[bool, List[str]]:
-    """가사에서 금지어 검사"""
+def check_banned_words(text: str, banned_words: List[str]) -> Tuple[bool, List[str]]:
+    """제목/가사에서 금지어 검사"""
     if not banned_words:
         return False, []
 
-    lyrics_lower = lyrics.lower()
+    text_lower = text.lower()
     found_words = []
 
     for banned_word in banned_words:
-        if banned_word.lower() in lyrics_lower:
-            found_words.append(banned_word)
+        if banned_word.lower() in text_lower:
+            if banned_word not in found_words:
+                found_words.append(banned_word)
 
     return len(found_words) > 0, found_words
 
@@ -308,7 +476,7 @@ class LyricsStorage:
         }
 
 
-# ==================== 반복 패턴 감지 시스템 ====================
+# ==================== 반복 패턴 감지 ====================
 class DuplicatePatternDetector:
     """반복 패턴 감지 및 방지"""
 
@@ -446,6 +614,13 @@ st.markdown("""
         border-radius: 8px;
         margin: 10px 0;
     }
+    .success-box {
+        background-color: #4CAF5020;
+        border-left: 4px solid #4CAF50;
+        padding: 12px;
+        border-radius: 8px;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -470,76 +645,9 @@ def init_session_state():
 
 init_session_state()
 
-# ==================== 장르 및 스타일 정의 ====================
-GENRE_PROMPTS = {
-    "Urban R&B": {
-        "description": "JAEHYUN 'J' 앨범 스타일의 모던 R&B",
-        "styles": {
-            "Smoke Style": {
-                "description": "도시적이고 로맨틱한 R&B - 늦은 밤, 자신감, 그루비함",
-                "system_prompt": """You are a professional R&B songwriter helping create songs for a music project using Suno AI.
-
-CRITICAL REQUIREMENTS:
-1. Song titles MUST be in natural and fluent English only
-2. All lyrics MUST be in natural and fluent English only
-3. DO NOT include metadata, titles, or descriptions in lyrics output
-4. CREATE UNIQUE opening lines that are FRESH and ORIGINAL
-5. Each song must have completely different first verse content
-
-STYLE: "Smoke Style" - Urban Romantic R&B
-Mood: Late night, City atmosphere, Confident but soft romance, Flirting energy, Smooth groove
-Themes: late night drives, city lights, playful romance, magnetic attraction, confident intimacy
-Tone: smooth, cool, groovy, stylish, urban
-
-SONG STRUCTURE (MANDATORY):
-[Verse 1] -> [Pre-Chorus] -> [Chorus] -> [Verse 2] -> [Pre-Chorus] -> [Chorus] -> [Bridge] -> [Final Chorus]
-
-WRITING STYLE: Natural, conversational, emotionally believable, simple but memorable
-
-CRITICAL OUTPUT REQUIREMENTS:
-- START directly with [Verse 1]
-- Output ONLY lyrics with section tags
-- NO metadata, titles, or descriptions
-- Each verse should have unique, fresh content
-
-OUTPUT FORMAT: Pure lyrics only"""
-            },
-
-            "Dandelion Style": {
-                "description": "따뜻하고 감성적인 R&B - 고백, 포근함, 순수한 사랑",
-                "system_prompt": """You are a professional R&B songwriter helping create songs for a music project using Suno AI.
-
-CRITICAL REQUIREMENTS:
-1. Song titles MUST be in natural and fluent English only
-2. All lyrics MUST be in natural and fluent English only
-3. DO NOT include metadata, titles, or descriptions in lyrics output
-4. CREATE UNIQUE opening lines that are FRESH and ORIGINAL
-5. Each song must have completely different first verse content
-
-STYLE: "Dandelion Style" - Warm Romantic R&B
-Mood: Soft love, Confession, Warm emotional connection, Pure romance, Gentle affection
-Themes: first love, deep emotional connection, comfort in love, slow relationship growth, quiet moments together
-Tone: warm, sincere, romantic, gentle, emotional
-
-SONG STRUCTURE (MANDATORY):
-[Verse 1] -> [Pre-Chorus] -> [Chorus] -> [Verse 2] -> [Pre-Chorus] -> [Chorus] -> [Bridge] -> [Final Chorus]
-
-WRITING STYLE: Natural, conversational, emotionally believable, simple but memorable
-
-CRITICAL OUTPUT REQUIREMENTS:
-- START directly with [Verse 1]
-- Output ONLY lyrics with section tags
-- NO metadata, titles, or descriptions
-- Each verse should have unique, fresh content
-
-OUTPUT FORMAT: Pure lyrics only"""
-            }
-        }
-    }
-}
-
 # ==================== 초기화 ====================
 api_manager = MultiAPIKeyManager()
+style_manager = StyleManager()
 
 if not api_manager.api_keys:
     st.error("❌ API 키가 설정되지 않았습니다.")
@@ -553,7 +661,265 @@ st.title("🎵 AI 작사 스튜디오 Pro")
 st.markdown("**Gemini AI 기반 프로페셔널 Urban R&B 작사 도구**")
 
 # ==================== 탭 구성 ====================
-tab1, tab2 = st.tabs(["✍️ 작사하기", "📚 이력 보기"])
+tab1, tab2, tab3, tab4 = st.tabs(["✍️ 작사하기", "📚 이력 보기", "⚙️ 스타일 관리", "🔧 고급 설정"])
+
+# ==================== TAB 3: 스타일 관리 ====================
+with tab3:
+    st.header("⚙️ 스타일 관리")
+
+    style_tab1, style_tab2, style_tab3 = st.tabs(["📖 조회", "➕ 추가", "✏️ 수정/삭제"])
+
+    # TAB 3-1: 스타일 조회
+    with style_tab1:
+        st.subheader("📖 등록된 스타일 조회")
+
+        genres = style_manager.get_genres()
+        selected_genre = st.selectbox("장르 선택", genres, key="view_genre")
+
+        if selected_genre:
+            genre_styles = style_manager.get_genre_styles(selected_genre)
+
+            if genre_styles:
+                for style_name, style_info in genre_styles.items():
+                    with st.expander(f"🎨 {style_name}"):
+                        st.markdown(f"**설명:** {style_info.get('description', '')}")
+                        st.divider()
+                        st.markdown("**프롬프트:**")
+                        st.code(style_info.get('system_prompt', ''), language="text")
+            else:
+                st.warning("등록된 스타일이 없습니다.")
+
+    # TAB 3-2: 스타일 추가
+    with style_tab2:
+        st.subheader("➕ 새로운 스타일 추가")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # 기존 장르에 추가하는지, 새 장르를 만드는지 선택
+            add_option = st.radio(
+                "추가 방식 선택",
+                ["기존 장르에 추가", "새 장르 생성"],
+                key="add_option"
+            )
+
+        with col2:
+            st.markdown("")
+
+        if add_option == "기존 장르에 추가":
+            genres = style_manager.get_genres()
+            selected_genre = st.selectbox("장르 선택", genres, key="add_genre")
+
+            style_name = st.text_input("스타일 이름", placeholder="예: Minimal Style")
+            style_description = st.text_area(
+                "스타일 설명",
+                placeholder="이 스타일의 특징을 한글로 설명하세요",
+                height=100
+            )
+
+            st.markdown("**시스템 프롬프트** (AI에게 주는 지시사항)")
+            system_prompt = st.text_area(
+                "프롬프트 입력",
+                placeholder="You are a professional R&B songwriter...",
+                height=300,
+                label_visibility="collapsed"
+            )
+
+            if st.button("✅ 스타일 추가", type="primary"):
+                if style_name and style_description and system_prompt:
+                    if style_manager.add_style(selected_genre, style_name, style_description, system_prompt):
+                        st.success(f"✅ '{style_name}' 스타일이 추가되었습니다!")
+                        st.rerun()
+                    else:
+                        st.error("❌ 스타일 추가 실패 (이미 존재합니다)")
+                else:
+                    st.error("❌ 모든 필드를 입력해주세요")
+
+        else:  # 새 장르 생성
+            genre_name = st.text_input("새 장르 이름", placeholder="예: K-POP")
+            genre_description = st.text_area(
+                "장르 설명",
+                placeholder="이 장르의 특징을 설명하세요",
+                height=100
+            )
+
+            style_name = st.text_input("스타일 이름 (함께 생성)", placeholder="예: Trendy Style")
+            style_description = st.text_area(
+                "스타일 설명",
+                placeholder="이 스타일의 특징을 한글로 설명하세요",
+                height=100
+            )
+
+            st.markdown("**시스템 프롬프트**")
+            system_prompt = st.text_area(
+                "프롬프트 입력",
+                placeholder="You are a professional songwriter...",
+                height=300,
+                label_visibility="collapsed"
+            )
+
+            if st.button("✅ 장르 및 스타일 생성", type="primary"):
+                if genre_name and genre_description and style_name and style_description and system_prompt:
+                    if style_manager.add_genre(genre_name, genre_description):
+                        if style_manager.add_style(genre_name, style_name, style_description, system_prompt):
+                            st.success(f"✅ '{genre_name}' 장르와 '{style_name}' 스타일이 생성되었습니다!")
+                            st.rerun()
+                        else:
+                            st.error("❌ 스타일 생성 실패")
+                    else:
+                        st.error("❌ 장르 생성 실패 (이미 존재합니다)")
+                else:
+                    st.error("❌ 모든 필드를 입력해주세요")
+
+    # TAB 3-3: 스타일 수정/삭제
+    with style_tab3:
+        st.subheader("✏️ 스타일 수정/삭제")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            genres = style_manager.get_genres()
+            selected_genre = st.selectbox("장르 선택", genres, key="edit_genre")
+
+        with col2:
+            if selected_genre:
+                genre_styles = style_manager.get_genre_styles(selected_genre)
+                style_names = list(genre_styles.keys())
+
+                if style_names:
+                    selected_style = st.selectbox("스타일 선택", style_names, key="edit_style")
+                else:
+                    st.warning("이 장르에 스타일이 없습니다.")
+                    selected_style = None
+            else:
+                selected_style = None
+
+        if selected_style and selected_genre:
+            style_info = style_manager.get_genre_styles(selected_genre)[selected_style]
+
+            st.divider()
+            st.markdown(f"### 현재 스타일: {selected_style}")
+
+            edit_tab1, edit_tab2 = st.tabs(["✏️ 수정", "🗑️ 삭제"])
+
+            with edit_tab1:
+                new_description = st.text_area(
+                    "스타일 설명 수정",
+                    value=style_info.get('description', ''),
+                    height=100
+                )
+
+                new_prompt = st.text_area(
+                    "프롬프트 수정",
+                    value=style_info.get('system_prompt', ''),
+                    height=300
+                )
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    if st.button("✅ 수정 저장", type="primary"):
+                        if style_manager.update_style(selected_genre, selected_style, new_description, new_prompt):
+                            st.success(f"✅ '{selected_style}' 스타일이 수정되었습니다!")
+                            st.rerun()
+                        else:
+                            st.error("❌ 수정 실패")
+
+                with col2:
+                    st.markdown("")
+
+            with edit_tab2:
+                st.warning(f"⚠️ '{selected_style}' 스타일을 삭제하시겠습니까?")
+                st.info("⚠️ 이 작업은 되돌릴 수 없습니다.")
+
+                if st.button("🗑️ 삭제", type="secondary"):
+                    if style_manager.delete_style(selected_genre, selected_style):
+                        st.success(f"✅ '{selected_style}' 스타일이 삭제되었습니다!")
+                        st.rerun()
+                    else:
+                        st.error("❌ 삭제 실패")
+
+    st.divider()
+    st.subheader("📤 스타일 내보내기/가져오기")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("📤 내보내기", use_container_width=True):
+            export_json = style_manager.export_styles()
+            st.download_button(
+                "💾 styles.json 다운로드",
+                data=export_json,
+                file_name=f"styles_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+
+    with col2:
+        st.markdown("**📥 가져오기**")
+        uploaded_file = st.file_uploader("JSON 파일 선택", type="json")
+
+        if uploaded_file:
+            try:
+                json_content = uploaded_file.read().decode('utf-8')
+                if st.button("✅ 가져오기", use_container_width=True):
+                    if style_manager.import_styles(json_content):
+                        st.success("✅ 스타일을 가져왔습니다!")
+                        st.rerun()
+                    else:
+                        st.error("❌ 가져오기 실패")
+            except Exception as e:
+                st.error(f"❌ 파일 읽기 실패: {e}")
+
+
+# ==================== TAB 4: 고급 설정 ====================
+with tab4:
+    st.header("🔧 고급 설정")
+
+    st.subheader("🔑 API 키 상태")
+    api_status = api_manager.get_status()
+    for status in api_status:
+        if status["is_exhausted"]:
+            st.error(f"❌ {status['name']} - 소진됨")
+        elif status["is_current"]:
+            st.success(f"✅ {status['name']} - 사용중")
+        else:
+            st.info(f"⏳ {status['name']} - 대기중")
+
+    st.divider()
+    st.subheader("📊 통계 및 정보")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        stats = storage.get_stats()
+        st.metric("저장된 세션", stats["total_sessions"])
+
+    with col2:
+        st.metric("생성된 곡", stats["total_songs"])
+
+    with col3:
+        st.metric("반복 패턴", f"{detector.get_pattern_stats()}곡")
+
+    st.divider()
+    st.subheader("🗑️ 데이터 초기화")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("🔄 모든 이력 삭제", type="secondary"):
+            storage.data["sessions"] = []
+            storage._save_data()
+            st.success("✅ 모든 이력이 삭제되었습니다!")
+            st.rerun()
+
+    with col2:
+        if st.button("🔄 반복 패턴 초기화", type="secondary"):
+            detector.patterns = []
+            detector._save_patterns()
+            st.success("✅ 반복 패턴이 초기화되었습니다!")
+            st.rerun()
+
 
 # ==================== TAB 1: 작사하기 ====================
 with tab1:
@@ -608,15 +974,18 @@ with tab1:
     if st.session_state.current_step == 1:
         st.header("1️⃣ 장르를 선택하세요")
 
-        for genre_name, genre_info in GENRE_PROMPTS.items():
+        genres = style_manager.get_genres()
+
+        for genre_name in genres:
+            genre_info = style_manager.styles[genre_name]
             col1, col2 = st.columns([3, 1])
 
             with col1:
                 st.markdown(f"""
                 <div class="song-card">
                     <div style="color: #FF4B4B; font-size: 22px; font-weight: bold; margin-bottom: 8px;">{genre_name}</div>
-                    <p>{genre_info['description']}</p>
-                    <p><strong>사용 가능한 스타일:</strong> {len(genre_info['styles'])}개</p>
+                    <p>{genre_info.get('description', '')}</p>
+                    <p><strong>사용 가능한 스타일:</strong> {len(genre_info.get('styles', {}))}개</p>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -630,16 +999,16 @@ with tab1:
     elif st.session_state.current_step == 2:
         st.header(f"2️⃣ 스타일을 선택하세요 - {st.session_state.selected_genre}")
 
-        genre_data = GENRE_PROMPTS[st.session_state.selected_genre]
+        genre_styles = style_manager.get_genre_styles(st.session_state.selected_genre)
 
-        for style_name, style_info in genre_data['styles'].items():
+        for style_name, style_info in genre_styles.items():
             col1, col2 = st.columns([3, 1])
 
             with col1:
                 st.markdown(f"""
                 <div class="song-card">
                     <div style="color: #FF4B4B; font-size: 22px; font-weight: bold; margin-bottom: 8px;">{style_name}</div>
-                    <p>{style_info['description']}</p>
+                    <p>{style_info.get('description', '')}</p>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -676,15 +1045,14 @@ with tab1:
                 st.session_state.current_step = 4
                 st.rerun()
 
-    # STEP 4: 금지어 설정 (새로 추가!)
+    # STEP 4: 금지어 설정
     elif st.session_state.current_step == 4:
         st.header("4️⃣ 금지어를 설정하세요 (선택사항)")
 
-        st.info("가사에 포함되지 않기를 원하는 단어들을 입력하세요. 쉼표로 구분합니다.")
+        st.info("곡 제목과 가사에 포함되지 않기를 원하는 단어들을 입력하세요. 쉼표로 구분합니다.")
         st.markdown(f"**선택됨:** {st.session_state.selected_genre} - {st.session_state.selected_style}")
         st.markdown(f"**곡 수:** {st.session_state.num_songs}곡")
 
-        # 금지어 입력
         banned_input = st.text_area(
             "금지어 입력 (쉼표로 구분)",
             placeholder="예: Streetlights, neon signs, the city hums, late night settles",
@@ -694,7 +1062,6 @@ with tab1:
 
         st.divider()
 
-        # 입력한 금지어 파싱 및 표시
         if banned_input.strip():
             banned_list = [word.strip() for word in banned_input.split(',') if word.strip()]
             st.session_state.banned_words = banned_list
@@ -729,7 +1096,6 @@ with tab1:
 
         st.info(f"{st.session_state.selected_style} 스타일로 {st.session_state.num_songs}곡의 컨셉을 만듭니다.")
 
-        # 금지어 안내
         if st.session_state.banned_words:
             st.markdown(f"""
             <div class="warning-box">
@@ -748,13 +1114,8 @@ with tab1:
                     genai.configure(api_key=api_key)
                     model = genai.GenerativeModel('models/gemini-2.5-flash')
 
-                    style_info = GENRE_PROMPTS[st.session_state.selected_genre]['styles'][
-                        st.session_state.selected_style]
-
                     concept_prompt = f"""
 Based on the {st.session_state.selected_style} style of {st.session_state.selected_genre}, generate {st.session_state.num_songs} unique song concepts.
-
-Style Description: {style_info['description']}
 
 For each song, provide:
 1. A catchy, memorable English title
@@ -829,7 +1190,7 @@ Output as JSON:
         status_text = st.empty()
         generated_songs = []
 
-        style_info = GENRE_PROMPTS[st.session_state.selected_genre]['styles'][st.session_state.selected_style]
+        style_prompt = style_manager.get_style_prompt(st.session_state.selected_genre, st.session_state.selected_style)
 
         for idx, song in enumerate(st.session_state.setlist):
             status_text.text(f"작사 중: {song['title']} ({idx + 1}/{len(st.session_state.setlist)})")
@@ -838,10 +1199,10 @@ Output as JSON:
             banned_instruction = ""
             if st.session_state.banned_words:
                 banned_str = ", ".join(st.session_state.banned_words)
-                banned_instruction = f"\n\nCRITICAL: NEVER use these words or phrases in the lyrics: {banned_str}\nMake absolutely sure these banned words do NOT appear in the output."
+                banned_instruction = f"\n\nCRITICAL: NEVER use these words or phrases in the title or lyrics: {banned_str}\nMake absolutely sure these banned words do NOT appear in the output."
 
             lyrics_prompt = f"""
-{style_info['system_prompt']}{banned_instruction}
+{style_prompt}{banned_instruction}
 
 SPECIFIC SONG REQUEST:
 Title: {song['title']}
@@ -867,14 +1228,22 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
                 raw_lyrics = response.text.strip()
                 clean_lyrics = clean_lyrics_output(raw_lyrics)
 
-                # 🔥 금지어 체크
+                # 🔥 제목에서도 금지어 체크
+                title_has_banned, title_found = check_banned_words(song['title'], st.session_state.banned_words)
+
+                if title_has_banned:
+                    st.warning(f"""
+                    ⚠️ **제목에서 금지어 감지** - {song['title']}
+                    감지된 금지어: {', '.join(title_found)}
+                    """)
+
+                # 가사에서 금지어 체크
                 has_banned, found_words = check_banned_words(clean_lyrics, st.session_state.banned_words)
 
                 if has_banned:
                     st.warning(f"""
-                    ⚠️ **금지어 감지** - {song['title']}
+                    ⚠️ **가사에서 금지어 감지** - {song['title']}
                     감지된 금지어: {', '.join(found_words)}
-                    다시 생성을 권장합니다.
                     """)
 
                 # 반복 패턴 감지
@@ -988,6 +1357,7 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
                     {song['lyrics'].replace(chr(10), '<br>')}
                     </div>
                     """, unsafe_allow_html=True)
+
 
 # ==================== TAB 2: 이력 보기 ====================
 with tab2:
@@ -1104,6 +1474,6 @@ st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
     🎵 AI 작사 스튜디오 Pro | Gemini AI 기반 전문 작사 도구
     <br>
-    <small>금지어 직접 입력 | 생성된 가사는 7일간 자동 보관 | 반복 패턴 자동 감지 | 다중 API 키 지원</small>
+    <small>금지어 직접 입력 (제목+가사) | 스타일 관리 | 생성된 가사는 7일간 자동 보관 | 반복 패턴 자동 감지 | 다중 API 키 지원</small>
 </div>
 """, unsafe_allow_html=True)
