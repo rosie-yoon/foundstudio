@@ -1,7 +1,10 @@
-# app.py
+# app.py (금지어 관리 기능 추가)
 """
 🎵 AI 작사 스튜디오 Pro - Gemini AI 기반 작사 도구
-Suno 연동 제거, 7일 자동 보관, 반복 패턴 방지 기능 추가
+- 금지어 설정 기능 추가
+- 다중 API 키 자동 전환
+- 7일 자동 보관
+- 반복 패턴 방지
 """
 
 import streamlit as st
@@ -12,13 +15,207 @@ import hashlib
 from datetime import datetime, timedelta
 import pandas as pd
 import google.generativeai as genai
+from typing import Optional, Tuple, List
 
 
 # ==================== 상수 정의 ====================
 LYRICS_STORAGE_FILE = "lyrics_storage.json"
 HISTORY_CACHE_FILE = "lyrics_history_cache.json"
+API_USAGE_LOG = "api_usage_log.json"
+BANNED_WORDS_FILE = "banned_words.json"
 MAX_HISTORY_DAYS = 7
 MAX_RECENT_PATTERNS = 50
+OPENING_WORDS_THRESHOLD = 3
+
+# 기본 금지어 (설정 초기값)
+DEFAULT_BANNED_WORDS = [
+    "Streetlights",
+    "street lights",
+    "neon signs",
+    "the city hums",
+    "late night settles"
+]
+
+
+# ==================== 금지어 관리 ====================
+class BannedWordsManager:
+    """금지어 관리 및 검증"""
+
+    def __init__(self, filename=BANNED_WORDS_FILE):
+        self.filename = filename
+        self.banned_words = self._load_banned_words()
+
+    def _load_banned_words(self):
+        """저장된 금지어 로드"""
+        if os.path.exists(self.filename):
+            try:
+                with open(self.filename, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data.get("words", DEFAULT_BANNED_WORDS)
+            except:
+                return DEFAULT_BANNED_WORDS
+        return DEFAULT_BANNED_WORDS
+
+    def _save_banned_words(self):
+        """금지어 저장"""
+        try:
+            data = {"words": self.banned_words, "updated_at": datetime.now().isoformat()}
+            with open(self.filename, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            st.error(f"금지어 저장 실패: {e}")
+            return False
+
+    def add_word(self, word: str):
+        """금지어 추가"""
+        word = word.strip().lower()
+        if word and word not in self.banned_words:
+            self.banned_words.append(word)
+            self._save_banned_words()
+            return True
+        return False
+
+    def remove_word(self, word: str):
+        """금지어 삭제"""
+        word = word.strip().lower()
+        if word in self.banned_words:
+            self.banned_words.remove(word)
+            self._save_banned_words()
+            return True
+        return False
+
+    def reset_to_default(self):
+        """기본값으로 리셋"""
+        self.banned_words = DEFAULT_BANNED_WORDS.copy()
+        self._save_banned_words()
+        return True
+
+    def check_lyrics(self, lyrics: str) -> Tuple[bool, List[str]]:
+        """가사에서 금지어 검사"""
+        lyrics_lower = lyrics.lower()
+        found_words = []
+
+        for banned_word in self.banned_words:
+            if banned_word.lower() in lyrics_lower:
+                found_words.append(banned_word)
+
+        return len(found_words) > 0, found_words
+
+    def get_all_words(self):
+        """모든 금지어 반환"""
+        return sorted(self.banned_words)
+
+
+# ==================== 다중 API 키 관리자 ====================
+class MultiAPIKeyManager:
+    """여러 개의 Gemini API 키를 관리하고 자동으로 전환"""
+
+    def __init__(self):
+        self.api_keys = self._load_api_keys()
+        self.current_key_index = 0
+        self.usage_log = self._load_usage_log()
+
+    def _load_api_keys(self):
+        """secrets.toml에서 API 키 로드"""
+        api_keys = []
+        try:
+            api_key_1 = st.secrets.get("GEMINI_API_KEY", None)
+            api_key_2 = st.secrets.get("GEMINI_API_KEY_2", None)
+
+            if api_key_1:
+                api_keys.append({"key": api_key_1, "name": "Key 1"})
+            if api_key_2:
+                api_keys.append({"key": api_key_2, "name": "Key 2"})
+
+        except Exception:
+            pass
+
+        if not api_keys:
+            try:
+                from dotenv import load_dotenv
+                load_dotenv()
+                api_key_1 = os.getenv('GEMINI_API_KEY')
+                api_key_2 = os.getenv('GEMINI_API_KEY_2')
+
+                if api_key_1:
+                    api_keys.append({"key": api_key_1, "name": "Key 1"})
+                if api_key_2:
+                    api_keys.append({"key": api_key_2, "name": "Key 2"})
+
+            except ImportError:
+                pass
+
+        return api_keys
+
+    def _load_usage_log(self):
+        """API 사용 기록 로드"""
+        if os.path.exists(API_USAGE_LOG):
+            try:
+                with open(API_USAGE_LOG, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                return {"keys": {}}
+        return {"keys": {}}
+
+    def _save_usage_log(self):
+        """API 사용 기록 저장"""
+        try:
+            with open(API_USAGE_LOG, 'w', encoding='utf-8') as f:
+                json.dump(self.usage_log, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _test_api_key(self, api_key):
+        """API 키가 유효한지 테스트"""
+        try:
+            test_genai = genai.GenerativeModel('models/gemini-2.5-flash')
+            genai.configure(api_key=api_key)
+            response = test_genai.generate_content("test", generation_config={'max_output_tokens': 1})
+            return True
+        except Exception as e:
+            return False
+
+    def get_current_key(self):
+        """현재 사용 가능한 API 키 반환"""
+        if not self.api_keys:
+            return None
+
+        for i in range(len(self.api_keys)):
+            key_data = self.api_keys[i]
+            if self._test_api_key(key_data["key"]):
+                self.current_key_index = i
+                return key_data["key"]
+
+        return None
+
+    def get_next_key(self):
+        """다음 API 키로 전환"""
+        if not self.api_keys:
+            return None
+
+        self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
+        return self.api_keys[self.current_key_index]["key"]
+
+    def mark_key_exhausted(self, api_key):
+        """특정 API 키를 소진된 것으로 표시"""
+        for i, key_data in enumerate(self.api_keys):
+            if key_data["key"] == api_key:
+                key_data["exhausted"] = True
+                self._save_usage_log()
+                break
+
+    def get_status(self):
+        """API 키 상태 반환"""
+        status = []
+        for i, key_data in enumerate(self.api_keys):
+            is_current = (i == self.current_key_index)
+            status.append({
+                "name": key_data["name"],
+                "is_current": is_current,
+                "is_exhausted": key_data.get("exhausted", False)
+            })
+        return status
 
 
 # ==================== 유틸리티 함수 ====================
@@ -60,10 +257,10 @@ def clean_lyrics_output(raw_lyrics):
     return '\n'.join(cleaned_lines).strip()
 
 
-def extract_first_verse(lyrics):
-    """가사에서 첫 번째 Verse 추출 (반복 감지용)"""
+def extract_opening_words(lyrics):
+    """가사에서 첫 번째 Verse의 처음 3단어 추출"""
     lines = lyrics.split('\n')
-    verse_content = []
+    verse_words = []
     in_first_verse = False
 
     for line in lines:
@@ -76,10 +273,14 @@ def extract_first_verse(lyrics):
         if in_first_verse:
             if stripped.startswith('[') and 'Verse' not in stripped:
                 break
-            if stripped:
-                verse_content.append(stripped.lower())
+            if stripped and not stripped.startswith('['):
+                words = stripped.lower().split()
+                verse_words.extend(words)
 
-    return ' '.join(verse_content[:3])  # 첫 3줄 기준
+                if len(verse_words) >= OPENING_WORDS_THRESHOLD:
+                    return ' '.join(verse_words[:OPENING_WORDS_THRESHOLD])
+
+    return ' '.join(verse_words[:OPENING_WORDS_THRESHOLD])
 
 
 def calculate_text_hash(text):
@@ -150,13 +351,6 @@ class LyricsStorage:
         self._cleanup_expired()
         return self.data.get("sessions", [])
 
-    def get_session(self, session_id):
-        """특정 세션 조회"""
-        for session in self.data.get("sessions", []):
-            if session.get("session_id") == session_id:
-                return session
-        return None
-
     def delete_session(self, session_id):
         """세션 삭제"""
         self.data["sessions"] = [
@@ -185,7 +379,7 @@ class DuplicatePatternDetector:
 
     def __init__(self, cache_file=HISTORY_CACHE_FILE):
         self.cache_file = cache_file
-        self.verse_patterns = self._load_patterns()
+        self.patterns = self._load_patterns()
 
     def _load_patterns(self):
         """기존 패턴 로드"""
@@ -201,40 +395,40 @@ class DuplicatePatternDetector:
     def _save_patterns(self):
         """패턴 저장"""
         try:
-            data = {"patterns": self.verse_patterns[-MAX_RECENT_PATTERNS:]}
+            data = {"patterns": self.patterns[-MAX_RECENT_PATTERNS:]}
             with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            st.warning(f"패턴 저장 실패: {e}")
+        except Exception:
+            pass
 
     def add_pattern(self, lyrics):
         """새로운 패턴 추가"""
-        first_verse = extract_first_verse(lyrics)
-        verse_hash = calculate_text_hash(first_verse)
+        opening_words = extract_opening_words(lyrics)
+        opening_hash = calculate_text_hash(opening_words)
 
-        self.verse_patterns.append({
-            "hash": verse_hash,
-            "timestamp": datetime.now().isoformat(),
-            "preview": first_verse[:100]
+        self.patterns.append({
+            "hash": opening_hash,
+            "opening": opening_words,
+            "timestamp": datetime.now().isoformat()
         })
 
-        # 최근 50곡만 유지
-        self.verse_patterns = self.verse_patterns[-MAX_RECENT_PATTERNS:]
+        self.patterns = self.patterns[-MAX_RECENT_PATTERNS:]
         self._save_patterns()
 
-    def is_duplicate(self, lyrics):
+    def is_duplicate(self, lyrics) -> Tuple[bool, str]:
         """중복 패턴 감지"""
-        first_verse = extract_first_verse(lyrics)
-        verse_hash = calculate_text_hash(first_verse)
+        opening_words = extract_opening_words(lyrics)
+        opening_hash = calculate_text_hash(opening_words)
 
-        for pattern in self.verse_patterns:
-            if pattern["hash"] == verse_hash:
-                return True, pattern.get("preview", "")
+        for pattern in self.patterns:
+            if pattern["hash"] == opening_hash:
+                return True, pattern.get("opening", "")
+
         return False, ""
 
     def get_pattern_stats(self):
         """패턴 통계"""
-        return len(self.verse_patterns)
+        return len(self.patterns)
 
 
 # ==================== 페이지 설정 ====================
@@ -291,6 +485,31 @@ st.markdown("""
         margin: 10px 0;
         font-family: 'Courier New', monospace;
         line-height: 1.6;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
+    .song-history-card {
+        background: #1a1a1a;
+        border-left: 4px solid #FF4B4B;
+        border-radius: 8px;
+        padding: 15px;
+        margin: 10px 0;
+    }
+    .banned-word-tag {
+        background-color: #FF6B6B;
+        color: white;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 13px;
+        display: inline-block;
+        margin: 5px 5px 5px 0;
+    }
+    .warning-box {
+        background-color: #ff6b6b20;
+        border-left: 4px solid #FF6B6B;
+        padding: 12px;
+        border-radius: 8px;
+        margin: 10px 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -327,6 +546,8 @@ CRITICAL REQUIREMENTS:
 1. Song titles MUST be in natural and fluent English only
 2. All lyrics MUST be in natural and fluent English only
 3. DO NOT include metadata, titles, or descriptions in lyrics output
+4. CREATE UNIQUE opening lines that are FRESH and ORIGINAL
+5. Each song must have completely different first verse content
 
 STYLE: "Smoke Style" - Urban Romantic R&B
 Mood: Late night, City atmosphere, Confident but soft romance, Flirting energy, Smooth groove
@@ -343,7 +564,6 @@ CRITICAL OUTPUT REQUIREMENTS:
 - Output ONLY lyrics with section tags
 - NO metadata, titles, or descriptions
 - Each verse should have unique, fresh content
-- Avoid repeating opening lines from previous songs
 
 OUTPUT FORMAT: Pure lyrics only"""
             },
@@ -356,6 +576,8 @@ CRITICAL REQUIREMENTS:
 1. Song titles MUST be in natural and fluent English only
 2. All lyrics MUST be in natural and fluent English only
 3. DO NOT include metadata, titles, or descriptions in lyrics output
+4. CREATE UNIQUE opening lines that are FRESH and ORIGINAL
+5. Each song must have completely different first verse content
 
 STYLE: "Dandelion Style" - Warm Romantic R&B
 Mood: Soft love, Confession, Warm emotional connection, Pure romance, Gentle affection
@@ -372,7 +594,6 @@ CRITICAL OUTPUT REQUIREMENTS:
 - Output ONLY lyrics with section tags
 - NO metadata, titles, or descriptions
 - Each verse should have unique, fresh content
-- Avoid repeating opening lines from previous songs
 
 OUTPUT FORMAT: Pure lyrics only"""
             }
@@ -380,40 +601,124 @@ OUTPUT FORMAT: Pure lyrics only"""
     }
 }
 
-# ==================== API 설정 ====================
-try:
-    API_KEY = st.secrets.get("GEMINI_API_KEY", None)
-except Exception:
-    API_KEY = None
+# ==================== 초기화 ====================
+api_manager = MultiAPIKeyManager()
+banned_words_manager = BannedWordsManager()
 
-if not API_KEY:
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-        API_KEY = os.getenv('GEMINI_API_KEY')
-    except ImportError:
-        API_KEY = None
-
-if API_KEY and API_KEY.strip():
-    try:
-        genai.configure(api_key=API_KEY.strip())
-    except Exception as e:
-        st.error(f"❌ API 키 오류: {e}")
-        st.stop()
-else:
+if not api_manager.api_keys:
     st.error("❌ API 키가 설정되지 않았습니다.")
     st.stop()
+
+storage = LyricsStorage()
+detector = DuplicatePatternDetector()
 
 # ==================== 메인 UI ====================
 st.title("🎵 AI 작사 스튜디오 Pro")
 st.markdown("**Gemini AI 기반 프로페셔널 Urban R&B 작사 도구**")
 
-# 저장소 초기화
-storage = LyricsStorage()
-detector = DuplicatePatternDetector()
-
 # ==================== 탭 구성 ====================
-tab1, tab2 = st.tabs(["✍️ 작사하기", "📚 이력 보기"])
+tab1, tab2, tab3 = st.tabs(["✍️ 작사하기", "📚 이력 보기", "⚙️ 설정"])
+
+# ==================== TAB 3: 설정 ====================
+with tab3:
+    st.header("⚙️ 금지어 관리")
+    st.info("가사 생성 시 피할 단어들을 설정합니다. 이 단어들이 포함된 가사는 경고됩니다.")
+
+    st.subheader("📋 현재 금지어 목록")
+
+    # 현재 금지어 표시
+    all_banned = banned_words_manager.get_all_words()
+    if all_banned:
+        st.markdown("**현재 설정된 금지어:**")
+        st.markdown(" ".join([f'<span class="banned-word-tag">{word}</span>' for word in all_banned]),
+                    unsafe_allow_html=True)
+    else:
+        st.info("설정된 금지어가 없습니다.")
+
+    st.divider()
+
+    st.subheader("➕ 금지어 추가")
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        new_word = st.text_input(
+            "새로운 금지어 입력",
+            placeholder="예: Streetlights, neon signs...",
+            label_visibility="collapsed"
+        )
+
+    with col2:
+        if st.button("추가", type="primary", use_container_width=True):
+            if new_word.strip():
+                if banned_words_manager.add_word(new_word):
+                    st.success(f"✅ '{new_word}' 추가됨")
+                    st.rerun()
+                else:
+                    st.warning(f"⚠️ '{new_word}'은 이미 목록에 있습니다.")
+            else:
+                st.error("❌ 금지어를 입력해주세요.")
+
+    st.divider()
+
+    st.subheader("🗑️ 금지어 삭제")
+
+    if all_banned:
+        selected_to_delete = st.multiselect(
+            "삭제할 금지어 선택",
+            options=all_banned,
+            label_visibility="collapsed"
+        )
+
+        if selected_to_delete:
+            col1, col2 = st.columns(2)
+
+            with col1:
+                if st.button(f"선택된 {len(selected_to_delete)}개 삭제", type="secondary", use_container_width=True):
+                    for word in selected_to_delete:
+                        banned_words_manager.remove_word(word)
+                    st.success(f"✅ {len(selected_to_delete)}개 삭제됨")
+                    st.rerun()
+
+            with col2:
+                st.markdown("")  # 공간
+
+    st.divider()
+
+    st.subheader("🔄 기본값으로 리셋")
+
+    col1, col2 = st.columns([2, 2])
+
+    with col1:
+        st.info(f"""
+        **기본 금지어:**
+        {chr(10).join([f'• {word}' for word in DEFAULT_BANNED_WORDS])}
+        """)
+
+    with col2:
+        if st.button("기본값으로 리셋", type="secondary", use_container_width=True):
+            banned_words_manager.reset_to_default()
+            st.success("✅ 기본값으로 리셋되었습니다.")
+            st.rerun()
+
+    st.divider()
+
+    st.header("🔑 API 키 상태")
+    st.info("등록된 API 키의 상태를 확인할 수 있습니다.")
+
+    api_status = api_manager.get_status()
+    for status in api_status:
+        col1, col2 = st.columns([3, 1])
+
+        with col1:
+            if status["is_exhausted"]:
+                st.error(f"❌ {status['name']} - 소진됨")
+            elif status["is_current"]:
+                st.success(f"✅ {status['name']} - 사용중")
+            else:
+                st.info(f"⏳ {status['name']} - 대기중")
+
+        with col2:
+            st.markdown("")
 
 # ==================== TAB 1: 작사하기 ====================
 with tab1:
@@ -444,11 +749,25 @@ with tab1:
         st.metric("중복 방지", f"{detector.get_pattern_stats()}곡 기록중")
 
         st.divider()
-        st.info(f"""
-        **📅 자동 보관 기간**
-        - {MAX_HISTORY_DAYS}일 동안 자동 저장
-        - 만료: {stats['oldest_expires']}
-        """)
+        st.header("🔑 API 상태")
+
+        api_status = api_manager.get_status()
+        for status in api_status:
+            if status["is_exhausted"]:
+                st.error(f"❌ {status['name']} (소진)")
+            elif status["is_current"]:
+                st.success(f"✅ {status['name']} (사용중)")
+            else:
+                st.info(f"⏳ {status['name']} (대기)")
+
+        st.divider()
+        st.header("🚫 금지어")
+        banned_count = len(banned_words_manager.get_all_words())
+        st.metric("설정된 금지어", f"{banned_count}개")
+
+        if st.button("🔧 금지어 설정", key="banned_nav"):
+            st.session_state.current_step = 0
+            st.switch_page("pages/⚙️_settings.py") if os.path.exists("pages") else None
 
         st.divider()
         if st.button("🔄 처음부터 다시 시작", type="secondary"):
@@ -536,9 +855,25 @@ with tab1:
 
         st.info(f"{st.session_state.selected_style} 스타일로 {st.session_state.num_songs}곡의 컨셉을 만듭니다.")
 
+        # 금지어 안내
+        banned_list = banned_words_manager.get_all_words()
+        if banned_list:
+            st.markdown(f"""
+            <div class="warning-box">
+            <strong>🚫 금지어 설정됨:</strong> {', '.join(banned_list[:5])}
+            {f'... 외 {len(banned_list) - 5}개' if len(banned_list) > 5 else ''}
+            </div>
+            """, unsafe_allow_html=True)
+
         if st.button("🎲 AI 자동 생성", type="primary"):
             with st.spinner("AI가 곡 아이디어를 구상하고 있습니다..."):
                 try:
+                    api_key = api_manager.get_current_key()
+                    if not api_key:
+                        st.error("❌ 사용 가능한 API 키가 없습니다.")
+                        st.stop()
+
+                    genai.configure(api_key=api_key)
                     model = genai.GenerativeModel('models/gemini-2.5-flash')
 
                     style_info = GENRE_PROMPTS[st.session_state.selected_genre]['styles'][
@@ -615,14 +950,20 @@ Output as JSON:
         status_text = st.empty()
         generated_songs = []
 
-        model = genai.GenerativeModel('models/gemini-2.5-flash')
         style_info = GENRE_PROMPTS[st.session_state.selected_genre]['styles'][st.session_state.selected_style]
+        banned_list = banned_words_manager.get_all_words()
 
         for idx, song in enumerate(st.session_state.setlist):
             status_text.text(f"작사 중: {song['title']} ({idx + 1}/{len(st.session_state.setlist)})")
 
+            # 금지어 포함 프롬프트
+            banned_instruction = ""
+            if banned_list:
+                banned_str = ", ".join(banned_list)
+                banned_instruction = f"\n\nCRITICAL: NEVER use these words or phrases in the lyrics: {banned_str}\nMake absolutely sure these banned words do NOT appear in the output."
+
             lyrics_prompt = f"""
-{style_info['system_prompt']}
+{style_info['system_prompt']}{banned_instruction}
 
 SPECIFIC SONG REQUEST:
 Title: {song['title']}
@@ -636,19 +977,37 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
 """
 
             try:
+                api_key = api_manager.get_current_key()
+                if not api_key:
+                    st.error("❌ 사용 가능한 API 키가 없습니다.")
+                    break
+
+                genai.configure(api_key=api_key)
+                model = genai.GenerativeModel('models/gemini-2.5-flash')
+
                 response = model.generate_content(lyrics_prompt)
                 raw_lyrics = response.text.strip()
                 clean_lyrics = clean_lyrics_output(raw_lyrics)
 
-                # 🔥 반복 패턴 감지
+                # 🔥 금지어 체크
+                has_banned, found_words = banned_words_manager.check_lyrics(clean_lyrics)
+
+                if has_banned:
+                    st.warning(f"""
+                    ⚠️ **금지어 감지** - {song['title']}
+                    감지된 금지어: {', '.join(found_words)}
+                    다시 생성을 권장합니다.
+                    """)
+
+                # 반복 패턴 감지
                 is_duplicate, preview = detector.is_duplicate(clean_lyrics)
 
                 if is_duplicate:
                     st.warning(f"""
                     ⚠️ **반복 패턴 감지** - {song['title']}
-                    유사한 도입부가 감지되었습니다. 다시 생성 권장합니다.
+                    감지된 반복: {preview}
+                    다시 생성을 권장합니다.
                     """)
-                    # 반복 감지되어도 일단 추가 (사용자 판단)
                 else:
                     detector.add_pattern(clean_lyrics)
 
@@ -659,11 +1018,26 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
                 })
 
             except Exception as e:
-                st.error(f"{song['title']} 생성 중 오류: {str(e)}")
+                error_msg = str(e)
+
+                if "429" in error_msg or "quota" in error_msg.lower():
+                    st.warning(f"⚠️ {api_manager.api_keys[api_manager.current_key_index]['name']} 할당량 초과")
+                    api_manager.mark_key_exhausted(api_key)
+
+                    next_key = api_manager.get_next_key()
+                    if next_key:
+                        st.info(f"🔄 {api_manager.api_keys[api_manager.current_key_index]['name']}로 전환합니다.")
+                        genai.configure(api_key=next_key)
+                        continue
+                    else:
+                        st.error("❌ 사용 가능한 API 키가 모두 소진되었습니다.")
+                        break
+
+                st.error(f"{song['title']} 생성 중 오류: {error_msg[:100]}")
                 generated_songs.append({
                     "title": song['title'],
                     "theme": song['theme'],
-                    "lyrics": f"가사 생성 오류: {str(e)}"
+                    "lyrics": f"가사 생성 오류: {error_msg[:50]}"
                 })
 
             progress_bar.progress((idx + 1) / len(st.session_state.setlist))
@@ -671,7 +1045,6 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
 
         st.session_state.generated_lyrics = generated_songs
 
-        # 💾 저장소에 저장
         try:
             session_id = storage.add_session(
                 st.session_state.selected_genre,
@@ -696,7 +1069,6 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
         else:
             st.success(f"🎉 총 {len(st.session_state.generated_lyrics)}곡의 가사가 완성되어 7일간 저장되었습니다!")
 
-            # 전체 제어 버튼
             col1, col2 = st.columns(2)
 
             with col1:
@@ -719,26 +1091,26 @@ Remember: Start directly with [Verse 1], output ONLY lyrics.
                     st.rerun()
 
             st.divider()
-
-            # 개별 곡 표시
             st.info("💡 각 곡을 클릭하여 펼치고 가사를 확인하세요.")
 
             for idx, song in enumerate(st.session_state.generated_lyrics, 1):
                 with st.expander(f"🎵 {idx}. {song['title']}", expanded=(idx == 1)):
-                    st.markdown(f"**컨셉:** {song.get('theme', '')}")
-                    st.divider()
+                    col1, col2 = st.columns([2, 1])
 
-                    # 가사만 표시
+                    with col1:
+                        st.markdown(f"**컨셉:** {song.get('theme', '')}")
+
+                    with col2:
+                        if st.button(f"📋 복사", key=f"copy_{idx}", use_container_width=True):
+                            st.code(song['lyrics'], language="text")
+
+                    st.divider()
                     st.markdown("### 📝 가사")
                     st.markdown(f"""
                     <div class="lyrics-container">
                     {song['lyrics'].replace(chr(10), '<br>')}
                     </div>
                     """, unsafe_allow_html=True)
-
-                    # 복사 버튼
-                    if st.button(f"📋 복사하기", key=f"copy_{idx}"):
-                        st.code(song['lyrics'], language="text")
 
 # ==================== TAB 2: 이력 보기 ====================
 with tab2:
@@ -750,7 +1122,6 @@ with tab2:
     if not sessions:
         st.warning("아직 저장된 이력이 없습니다.")
     else:
-        # 필터 섹션
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -764,14 +1135,12 @@ with tab2:
         with col3:
             search_term = st.text_input("🔍 제목 검색", placeholder="제목으로 검색...")
 
-        # 필터 적용
         filtered_sessions = [
             s for s in sessions
             if (selected_genre_filter == "전체" or s["genre"] == selected_genre_filter) and
                (selected_style_filter == "전체" or s["style"] == selected_style_filter)
         ]
 
-        # 곡 수준 검색 필터
         if search_term:
             filtered_sessions = [
                 {
@@ -793,59 +1162,64 @@ with tab2:
             total_filtered_songs = sum(len(s["songs"]) for s in filtered_sessions)
             st.success(f"📊 {len(filtered_sessions)}개 세션, 총 {total_filtered_songs}곡 검색됨")
 
-            # 세션별 표시
             for session in filtered_sessions:
                 session_created = datetime.fromisoformat(session["created_at"])
                 session_expires = datetime.fromisoformat(session["expires_at"])
                 time_left = (session_expires - datetime.now()).days
 
-                with st.expander(
-                    f"📁 {session_created.strftime('%Y-%m-%d %H:%M')} | "
-                    f"{session['genre']} - {session['style']} | "
-                    f"{len(session['songs'])}곡 | "
-                    f"⏰ {time_left}일 남음",
-                    expanded=False
-                ):
-                    col_delete, col_download = st.columns([1, 1])
+                st.markdown(f"""
+                <div class="song-history-card">
+                    <strong>📁 {session_created.strftime('%Y-%m-%d %H:%M')}</strong> | 
+                    <strong>{session['genre']}</strong> - <strong>{session['style']}</strong> | 
+                    <strong>{len(session['songs'])}곡</strong> | 
+                    ⏰ <strong>{time_left}일 남음</strong>
+                </div>
+                """, unsafe_allow_html=True)
 
-                    with col_download:
-                        session_lyrics = "\n\n" + "=" * 80 + "\n\n".join([
-                            f"[{idx}] {song['title']}\n\n{song['lyrics']}"
-                            for idx, song in enumerate(session["songs"], 1)
-                        ])
+                col_download, col_delete = st.columns([1, 1])
 
-                        st.download_button(
-                            "💾 세션 다운로드",
-                            data=session_lyrics,
-                            file_name=f"{session['session_id']}.txt",
-                            mime="text/plain",
-                            key=f"download_{session['session_id']}"
-                        )
+                with col_download:
+                    session_lyrics = "\n\n" + "=" * 80 + "\n\n".join([
+                        f"[{idx}] {song['title']}\n\n{song['lyrics']}"
+                        for idx, song in enumerate(session["songs"], 1)
+                    ])
 
-                    with col_delete:
-                        if st.button("🗑️ 삭제", key=f"delete_{session['session_id']}"):
-                            storage.delete_session(session['session_id'])
-                            st.rerun()
+                    st.download_button(
+                        "💾 세션 다운로드",
+                        data=session_lyrics,
+                        file_name=f"{session['session_id']}.txt",
+                        mime="text/plain",
+                        key=f"download_{session['session_id']}",
+                        use_container_width=True
+                    )
 
-                    st.divider()
+                with col_delete:
+                    if st.button("🗑️ 삭제", key=f"delete_{session['session_id']}", use_container_width=True):
+                        storage.delete_session(session['session_id'])
+                        st.rerun()
 
-                    # 개별 곡 표시
-                    for idx, song in enumerate(session["songs"], 1):
-                        with st.expander(f"🎵 {idx}. {song['title']}", expanded=False):
+                st.divider()
+
+                for idx, song in enumerate(session["songs"], 1):
+                    with st.expander(f"🎵 {idx}. {song['title']}"):
+                        col1, col2 = st.columns([2, 1])
+
+                        with col1:
                             st.markdown(f"**컨셉:** {song.get('theme', '')}")
-                            st.divider()
 
-                            # 가사만 표시
-                            st.markdown("### 📝 가사")
-                            st.markdown(f"""
-                            <div class="lyrics-container">
-                            {song['lyrics'].replace(chr(10), '<br>')}
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                            # 복사 버튼
-                            if st.button(f"📋 복사하기", key=f"copy_history_{session['session_id']}_{idx}"):
+                        with col2:
+                            if st.button(f"📋 복사", key=f"copy_history_{session['session_id']}_{idx}", use_container_width=True):
                                 st.code(song['lyrics'], language="text")
+
+                        st.divider()
+                        st.markdown("### 📝 가사")
+                        st.markdown(f"""
+                        <div class="lyrics-container">
+                        {song['lyrics'].replace(chr(10), '<br>')}
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                st.divider()
 
 # ==================== 푸터 ====================
 st.divider()
@@ -853,6 +1227,6 @@ st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
     🎵 AI 작사 스튜디오 Pro | Gemini AI 기반 전문 작사 도구
     <br>
-    <small>생성된 가사는 7일간 자동 보관됩니다. 반복 패턴을 자동으로 감지합니다.</small>
+    <small>금지어 설정 | 생성된 가사는 7일간 자동 보관 | 반복 패턴 자동 감지 | 다중 API 키 지원</small>
 </div>
 """, unsafe_allow_html=True)
